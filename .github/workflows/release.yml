@@ -109,6 +109,9 @@ jobs:
       - linux
     if: startsWith(github.ref, 'refs/tags/')
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -123,3 +126,17 @@ jobs:
             release-assets/android-apk/Blurfer.apk
             release-assets/linux-builds/Blurfer-linux-x86_64.bin
             release-assets/linux-builds/Blurfer-x86_64.AppImage
+
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for notes in .github/release-notes/v*.md; do
+            tag="$(basename "$notes" .md)"
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+            else
+              echo "Skipping $tag because that release does not exist yet."
+            fi
+          done

@@ -29,18 +29,6 @@ def resource_path(*parts):
     return RESOURCE_DIR.joinpath(*parts)
 
 
-def get_default_payload_dir():
-    candidate = APP_DIR / "payloads"
-    try:
-        candidate.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        if sys.platform.startswith("win"):
-            documents = Path.home() / "Documents"
-            return documents / "Blurfer Payloads"
-        return Path.home() / "Blurfer Payloads"
-    return candidate
-
-
 def get_config_dir():
     if sys.platform.startswith("win"):
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -50,7 +38,7 @@ def get_config_dir():
     return base / "blurfer"
 
 
-DEFAULT_PAYLOAD_DIR = get_default_payload_dir()
+DEFAULT_PAYLOAD_DIR = ""
 CONFIG_PATH = get_config_dir() / SETTINGS_FILE_NAME
 APP_WINDOW_BASE = TkinterDnD.Tk if TkinterDnD else tk.Tk
 
@@ -88,7 +76,7 @@ class BlurferApp(APP_WINDOW_BASE):
 
         self.settings = self._load_settings()
 
-        self.payload_dir = tk.StringVar(value=self.settings.get("payload_dir", str(DEFAULT_PAYLOAD_DIR)))
+        self.payload_dir = tk.StringVar(value=self.settings.get("payload_dir", DEFAULT_PAYLOAD_DIR))
         self.host = tk.StringVar(value=self.settings.get("host", ""))
         self.port = tk.StringVar(value=self.settings.get("port", str(DEFAULT_PORT)))
         self.selected_port = tk.StringVar(value=self.settings.get("port", str(DEFAULT_PORT)))
@@ -172,15 +160,17 @@ class BlurferApp(APP_WINDOW_BASE):
         if not isinstance(payload_orders, dict):
             payload_orders = {}
 
-        if hasattr(self, "tree"):
-            payload_orders[str(self._payload_dir_path())] = [path.name for path in self._ordered_payload_files()]
+        payload_dir_path = self._payload_dir_path()
+        if hasattr(self, "tree") and payload_dir_path is not None:
+            folder_key = str(payload_dir_path)
+            payload_orders[folder_key] = [path.name for path in self._ordered_payload_files()]
 
         payload_delays = self.settings.get("payload_delays", {})
         if not isinstance(payload_delays, dict):
             payload_delays = {}
 
-        if hasattr(self, "tree"):
-            payload_delays[str(self._payload_dir_path())] = {
+        if hasattr(self, "tree") and payload_dir_path is not None:
+            payload_delays[folder_key] = {
                 Path(item).name: self._get_tree_delay(item) for item in self.tree.get_children()
             }
 
@@ -188,13 +178,13 @@ class BlurferApp(APP_WINDOW_BASE):
         if not isinstance(payload_ports, dict):
             payload_ports = {}
 
-        if hasattr(self, "tree"):
-            payload_ports[str(self._payload_dir_path())] = {
+        if hasattr(self, "tree") and payload_dir_path is not None:
+            payload_ports[folder_key] = {
                 Path(item).name: self._get_tree_port(item) for item in self.tree.get_children()
             }
 
         settings = {
-            "payload_dir": self.payload_dir.get().strip() or str(DEFAULT_PAYLOAD_DIR),
+            "payload_dir": self.payload_dir.get().strip(),
             "host": self.host.get().strip(),
             "port": self.port.get().strip(),
             "payload_orders": payload_orders,
@@ -380,6 +370,9 @@ class BlurferApp(APP_WINDOW_BASE):
         if copied:
             self.refresh_payloads()
 
+        if not copied and not skipped and not failed:
+            return "break"
+
         summary = [f"Copied {copied} payload{'s' if copied != 1 else ''}"]
         if skipped:
             summary.append(f"skipped {skipped}")
@@ -397,7 +390,13 @@ class BlurferApp(APP_WINDOW_BASE):
 
     def _copy_dropped_files_to_payload_folder(self, dropped_files):
         payload_dir = self._payload_dir_path()
-        payload_dir.mkdir(parents=True, exist_ok=True)
+        if payload_dir is None:
+            self._log("Choose a payload folder before dropping files.")
+            return 0, 0, 0
+
+        if not payload_dir.is_dir():
+            self._log(f"Payload folder not found: {payload_dir}")
+            return 0, 0, 0
 
         copied = 0
         skipped = 0
@@ -447,19 +446,36 @@ class BlurferApp(APP_WINDOW_BASE):
             return False
 
     def browse_payload_dir(self):
-        selected = filedialog.askdirectory(initialdir=self.payload_dir.get() or str(APP_DIR))
+        initial_dir = self.payload_dir.get().strip()
+        if not initial_dir or not Path(initial_dir).expanduser().is_dir():
+            initial_dir = str(Path.home())
+
+        selected = filedialog.askdirectory(initialdir=initial_dir)
         if selected:
             self.payload_dir.set(selected)
             self.refresh_payloads()
 
     def refresh_payloads(self):
         path = self._payload_dir_path()
-        path.mkdir(parents=True, exist_ok=True)
-        discovered = sorted((p for p in path.iterdir() if self._is_payload_file(p)), key=lambda item: item.name.lower())
-        self.payload_files = self._apply_saved_payload_order(path, discovered)
-
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        if path is None:
+            self.payload_files = []
+            self.status.set("Choose folder")
+            self._log("Choose a payload folder to load payloads.")
+            self._save_settings()
+            return
+
+        if not path.is_dir():
+            self.payload_files = []
+            self.status.set("Folder missing")
+            self._log(f"Payload folder not found: {path}")
+            self._save_settings()
+            return
+
+        discovered = sorted((p for p in path.iterdir() if self._is_payload_file(p)), key=lambda item: item.name.lower())
+        self.payload_files = self._apply_saved_payload_order(path, discovered)
 
         for file_path in self.payload_files:
             stat = file_path.stat()
@@ -490,6 +506,10 @@ class BlurferApp(APP_WINDOW_BASE):
         self._start_injection(selected)
 
     def inject_all(self):
+        if self._payload_dir_path() is None:
+            messagebox.showinfo("No payload folder", "Choose a payload folder first.")
+            return
+
         if not self.payload_files:
             messagebox.showinfo("No payloads found", "Add payload files to the selected folder first.")
             return
@@ -644,7 +664,9 @@ class BlurferApp(APP_WINDOW_BASE):
 
     def _payload_dir_path(self):
         raw_path = self.payload_dir.get().strip()
-        return Path(raw_path).expanduser() if raw_path else DEFAULT_PAYLOAD_DIR
+        if not raw_path:
+            return None
+        return Path(raw_path).expanduser()
 
     def _apply_saved_payload_order(self, folder_path, files):
         order = self.settings.get("payload_orders", {}).get(str(folder_path), [])

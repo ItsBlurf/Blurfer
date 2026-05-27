@@ -6,13 +6,17 @@ macOS users can use [duperin/payload-sender](https://github.com/duperin/payload-
 
 ## Screenshots
 
-![Blurfer on Android](docs/screenshots/android.jpeg)
+### Desktop
 
-![Blurfer on Windows](docs/screenshots/desktop.png)
+<img src="docs/screenshots/desktop.png" alt="Blurfer desktop interface" width="900">
+
+### Android
+
+<img src="docs/screenshots/android.jpeg" alt="Blurfer Android interface" width="320">
 
 ## Usage
 
-1. Put payload files in the `payloads` folder, or choose any payload folder in the app.
+1. Choose the folder that contains your payload files in the app.
 2. Run the GUI:
 
    ```powershell
