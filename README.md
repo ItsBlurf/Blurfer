@@ -2,7 +2,13 @@
 
 Blurfer is a small cross-platform GUI for sending payload files to a target host over TCP.
 
-macOS users can use [duperin/payload-sender](https://github.com/duperin/payload-sender/) for a macOS payload sender. Simple thanks to duperin for that project.
+macOS users can use [duperin/payload-sender](https://github.com/duperin/payload-sender/) for a macOS payload sender. Thanks to duperin for that project.
+
+## Screenshots
+
+![Blurfer on Android](docs/screenshots/android.jpeg)
+
+![Blurfer on Windows](docs/screenshots/desktop.png)
 
 ## Usage
 
