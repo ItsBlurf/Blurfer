@@ -19,7 +19,7 @@ except ImportError:
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
-DEFAULT_PORT = 9026
+DEFAULT_PORT = 9021
 SOCKET_TIMEOUT_SECONDS = 15
 APP_NAME = "Blurfer"
 SETTINGS_FILE_NAME = "settings.json"

@@ -47,7 +47,7 @@ import java.util.concurrent.Executors;
 @SuppressLint("SetTextI18n")
 public class MainActivity extends Activity {
     private static final int REQUEST_FOLDER = 1001;
-    private static final int DEFAULT_PORT = 9026;
+    private static final int DEFAULT_PORT = 9021;
     private static final int SOCKET_TIMEOUT_MS = 15000;
 
     private static final String PREFS = "blurfer_settings";

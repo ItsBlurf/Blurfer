@@ -2,6 +2,8 @@
 
 Blurfer is a small cross-platform GUI for sending payload files to a target host over TCP.
 
+macOS users can use [duperin/payload-sender](https://github.com/duperin/payload-sender/) for a macOS payload sender. Simple thanks to duperin for that project.
+
 ## Usage
 
 1. Put payload files in the `payloads` folder, or choose any payload folder in the app.
@@ -12,7 +14,7 @@ Blurfer is a small cross-platform GUI for sending payload files to a target host
    ```
 
 3. Enter the target host/IP address.
-4. Keep the default port `9026`, or set the default port you use most often.
+4. Keep the default port `9021`, or set the default port you use most often.
 5. Use `Move Up` and `Move Down` to choose the injection order.
 6. Select one or more payloads, enter a value in `Selected port`, then click `Set Port` to choose the port for each selected payload.
 7. Select one or more payloads, enter a value in `Selected delay`, then click `Set Delay` to choose how long Blurfer waits before each selected payload runs.
