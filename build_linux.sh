@@ -19,7 +19,6 @@ fi
     --onefile \
     --windowed \
     --name Blurfer \
-    --add-data "payloads:payloads" \
     --add-data "assets:assets" \
     blurfer.py
 

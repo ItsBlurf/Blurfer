@@ -25,7 +25,6 @@ if ($LASTEXITCODE -ne 0) {
     --windowed `
     --name Blurfer `
     --icon "assets\blurfer.ico" `
-    --add-data "payloads;payloads" `
     --add-data "assets;assets" `
     blurfer.py
 if ($LASTEXITCODE -ne 0) {
