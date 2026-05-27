@@ -1,6 +1,7 @@
 package com.blurfer.app;
 
 import android.annotation.SuppressLint;
+import android.app.AlertDialog;
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -24,7 +25,6 @@ import android.view.Window;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final List<PayloadItem> payloads = new ArrayList<>();
+    private final List<String> logEntries = new ArrayList<>();
 
     private SharedPreferences prefs;
     private Uri folderUri;
@@ -240,13 +241,15 @@ public class MainActivity extends Activity {
         statusText.setPadding(0, dp(8), 0, dp(4));
         panel.addView(statusText);
 
-        HorizontalScrollView logScroll = new HorizontalScrollView(this);
         logText = text("Ready.", 12, "#172033", false);
         logText.setTypeface(Typeface.MONOSPACE);
         logText.setPadding(dp(10), dp(9), dp(10), dp(9));
         logText.setBackground(rounded("#FFFFFF", "#D9DEE8", 8));
-        logScroll.addView(logText);
-        panel.addView(logScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        logText.setGravity(Gravity.CENTER_VERTICAL);
+        logText.setMaxLines(2);
+        logText.setMinHeight(dp(54));
+        logText.setOnClickListener(v -> showFullLog());
+        panel.addView(logText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         return panel;
     }
@@ -788,14 +791,61 @@ public class MainActivity extends Activity {
     }
 
     private void appendLog(String message) {
-        String current = logText.getText().toString();
         String timestamp = DateFormat.getTimeInstance(DateFormat.SHORT).format(new Date());
         String nextLine = "[" + timestamp + "] " + message;
-        if ("Ready.".contentEquals(current)) {
-            logText.setText(nextLine);
-        } else {
-            logText.setText(current + "\n" + nextLine);
+
+        logEntries.add(nextLine);
+        if (logEntries.size() > 200) {
+            logEntries.remove(0);
         }
+
+        updateLogPreview();
+    }
+
+    private void updateLogPreview() {
+        if (logEntries.isEmpty()) {
+            logText.setText("Ready.");
+            return;
+        }
+
+        int start = Math.max(0, logEntries.size() - 2);
+        StringBuilder preview = new StringBuilder();
+        for (int index = start; index < logEntries.size(); index++) {
+            if (preview.length() > 0) {
+                preview.append('\n');
+            }
+            preview.append(logEntries.get(index));
+        }
+        logText.setText(preview.toString());
+    }
+
+    private void showFullLog() {
+        ScrollView scrollView = new ScrollView(this);
+        TextView fullLogText = text(fullLogText(), 12, "#172033", false);
+        fullLogText.setTypeface(Typeface.MONOSPACE);
+        fullLogText.setPadding(dp(14), dp(12), dp(14), dp(12));
+        scrollView.addView(fullLogText);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Activity")
+            .setView(scrollView)
+            .setPositiveButton("Close", null)
+            .show();
+    }
+
+    private String fullLogText() {
+        if (logEntries.isEmpty()) {
+            return "Ready.";
+        }
+
+        StringBuilder fullLog = new StringBuilder();
+        for (String entry : logEntries) {
+            if (fullLog.length() > 0) {
+                fullLog.append('\n');
+            }
+            fullLog.append(entry);
+        }
+        return fullLog.toString();
     }
 
     private LinearLayout card() {

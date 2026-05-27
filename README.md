@@ -77,6 +77,7 @@ It has the same core features with a phone-friendly interface:
 - set host/IP and a default port
 - set a saved port for each payload
 - set a saved delay before each payload runs
+- keep the activity log compact, with the full log available by tapping it
 - save the selected folder and settings between launches
 
 To build an APK from Android Studio, open the `android` folder and run:
