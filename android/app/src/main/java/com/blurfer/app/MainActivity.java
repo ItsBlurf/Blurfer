@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
@@ -129,14 +130,14 @@ public class MainActivity extends Activity {
     private void buildInterface() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(10));
+        root.setPadding(dp(14), dp(12), dp(14), dp(8));
         root.setBackgroundColor(Color.parseColor("#F6F7F9"));
 
-        TextView title = text("Blurfer", 24, "#172033", true);
+        TextView title = text("Blurfer", 23, "#172033", true);
         root.addView(title);
 
-        TextView subtitle = text("Choose a folder, review your queue, then inject selected payloads or all payloads.", 14, "#687386", false);
-        subtitle.setPadding(0, dp(4), 0, dp(14));
+        TextView subtitle = text("Choose a folder, review your queue, then inject selected payloads or all payloads.", 13, "#687386", false);
+        subtitle.setPadding(0, dp(3), 0, dp(10));
         root.addView(subtitle);
 
         root.addView(buildTargetCard());
@@ -145,9 +146,9 @@ public class MainActivity extends Activity {
         LinearLayout listHeader = new LinearLayout(this);
         listHeader.setOrientation(LinearLayout.HORIZONTAL);
         listHeader.setGravity(Gravity.CENTER_VERTICAL);
-        listHeader.setPadding(0, dp(12), 0, dp(8));
+        listHeader.setPadding(0, dp(8), 0, dp(5));
 
-        TextView payloadHeader = text("Payloads", 18, "#172033", true);
+        TextView payloadHeader = text("Payloads", 17, "#172033", true);
         listHeader.addView(payloadHeader, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         countText = text("0", 13, "#687386", false);
@@ -208,21 +209,30 @@ public class MainActivity extends Activity {
         TextView label = text("Payload folder", 15, "#172033", true);
         folderText = text("No folder selected", 13, "#687386", false);
         folderText.setPadding(0, dp(4), dp(8), 0);
+        folderText.setSingleLine(true);
+        folderText.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         textColumn.addView(label);
         textColumn.addView(folderText);
         row.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        chooseButton = button("Choose Folder", "#2563EB", "#FFFFFF");
+        LinearLayout buttonRow = new LinearLayout(this);
+        buttonRow.setOrientation(LinearLayout.HORIZONTAL);
+        buttonRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        chooseButton = button("Choose", "#2563EB", "#FFFFFF");
         chooseButton.setOnClickListener(v -> chooseFolder());
-        row.addView(chooseButton);
+        buttonRow.addView(chooseButton, new LinearLayout.LayoutParams(dp(92), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Space refreshGap = new Space(this);
+        buttonRow.addView(refreshGap, new LinearLayout.LayoutParams(dp(6), 1));
+
+        refreshButton = smallButton("Refresh", "#EEF2FF", "#1D4ED8");
+        refreshButton.setOnClickListener(v -> refreshPayloads());
+        buttonRow.addView(refreshButton, new LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        row.addView(buttonRow);
 
         card.addView(row);
-
-        refreshButton = button("Refresh", "#EEF2FF", "#1D4ED8");
-        refreshButton.setOnClickListener(v -> refreshPayloads());
-        LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        refreshParams.setMargins(0, dp(12), 0, 0);
-        card.addView(refreshButton, refreshParams);
 
         return card;
     }
@@ -230,24 +240,24 @@ public class MainActivity extends Activity {
     private View buildProgressArea() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(0, dp(10), 0, dp(8));
+        panel.setPadding(0, dp(8), 0, dp(7));
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(1);
         progressBar.setProgress(0);
-        panel.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)));
+        panel.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)));
 
         statusText = text("Ready", 13, "#687386", false);
-        statusText.setPadding(0, dp(8), 0, dp(4));
+        statusText.setPadding(0, dp(6), 0, dp(3));
         panel.addView(statusText);
 
         logText = text("Ready.", 12, "#172033", false);
         logText.setTypeface(Typeface.MONOSPACE);
-        logText.setPadding(dp(10), dp(9), dp(10), dp(9));
+        logText.setPadding(dp(9), dp(7), dp(9), dp(7));
         logText.setBackground(rounded("#FFFFFF", "#D9DEE8", 8));
         logText.setGravity(Gravity.CENTER_VERTICAL);
         logText.setMaxLines(2);
-        logText.setMinHeight(dp(54));
+        logText.setMinHeight(dp(46));
         logText.setOnClickListener(v -> showFullLog());
         panel.addView(logText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -477,7 +487,7 @@ public class MainActivity extends Activity {
     private View payloadRow(PayloadItem item, int index) {
         LinearLayout row = card();
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setPadding(dp(9), dp(8), dp(9), dp(8));
 
         LinearLayout topRow = new LinearLayout(this);
         topRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -492,29 +502,33 @@ public class MainActivity extends Activity {
         textColumn.setOrientation(LinearLayout.VERTICAL);
 
         TextView name = text(item.name, 15, "#172033", true);
-        TextView meta = text(formatSize(item.size) + "  " + formatDate(item.modified), 12, "#687386", false);
-        meta.setPadding(0, dp(3), 0, 0);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        TextView meta = text(formatSize(item.size) + "  " + formatDate(item.modified), 11, "#687386", false);
+        meta.setSingleLine(true);
+        meta.setEllipsize(TextUtils.TruncateAt.END);
+        meta.setPadding(0, dp(2), 0, 0);
         textColumn.addView(name);
         textColumn.addView(meta);
         topRow.addView(textColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        item.statusView = text(item.status, 12, "#1D4ED8", true);
+        item.statusView = text(item.status, 11, "#1D4ED8", true);
         item.statusView.setGravity(Gravity.CENTER);
-        item.statusView.setPadding(dp(9), dp(5), dp(9), dp(5));
+        item.statusView.setPadding(dp(7), dp(4), dp(7), dp(4));
         item.statusView.setBackground(rounded("#EEF2FF", "#D9DEE8", 6));
         topRow.addView(item.statusView);
 
         row.addView(topRow);
 
-        LinearLayout fieldsRow = new LinearLayout(this);
-        fieldsRow.setOrientation(LinearLayout.HORIZONTAL);
-        fieldsRow.setGravity(Gravity.CENTER_VERTICAL);
-        fieldsRow.setPadding(0, dp(8), 0, 0);
+        LinearLayout controlsRow = new LinearLayout(this);
+        controlsRow.setOrientation(LinearLayout.HORIZONTAL);
+        controlsRow.setGravity(Gravity.CENTER_VERTICAL);
+        controlsRow.setPadding(0, dp(7), 0, 0);
 
-        TextView portLabel = text("Port", 12, "#687386", false);
-        fieldsRow.addView(portLabel);
+        TextView portLabel = text("Port", 11, "#687386", false);
+        controlsRow.addView(portLabel);
 
-        EditText portField = input(String.valueOf(DEFAULT_PORT));
+        EditText portField = compactInput(String.valueOf(DEFAULT_PORT));
         portField.setInputType(InputType.TYPE_CLASS_NUMBER);
         portField.setText(item.portText);
         portField.setEnabled(!running);
@@ -525,14 +539,14 @@ public class MainActivity extends Activity {
                 savePayloadPort(item);
             }
         });
-        LinearLayout.LayoutParams portParams = new LinearLayout.LayoutParams(dp(90), ViewGroup.LayoutParams.WRAP_CONTENT);
-        portParams.setMargins(dp(8), 0, dp(12), 0);
-        fieldsRow.addView(portField, portParams);
+        LinearLayout.LayoutParams portParams = new LinearLayout.LayoutParams(dp(70), ViewGroup.LayoutParams.WRAP_CONTENT);
+        portParams.setMargins(dp(5), 0, dp(8), 0);
+        controlsRow.addView(portField, portParams);
 
-        TextView delayLabel = text("Delay", 12, "#687386", false);
-        fieldsRow.addView(delayLabel);
+        TextView delayLabel = text("Delay", 11, "#687386", false);
+        controlsRow.addView(delayLabel);
 
-        EditText delayField = input("0");
+        EditText delayField = compactInput("0");
         delayField.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         delayField.setText(item.delayText);
         delayField.setEnabled(!running);
@@ -543,29 +557,26 @@ public class MainActivity extends Activity {
                 savePayloadDelay(item);
             }
         });
-        LinearLayout.LayoutParams delayParams = new LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.WRAP_CONTENT);
-        delayParams.setMargins(dp(8), 0, 0, 0);
-        fieldsRow.addView(delayField, delayParams);
-        row.addView(fieldsRow);
+        LinearLayout.LayoutParams delayParams = new LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.WRAP_CONTENT);
+        delayParams.setMargins(dp(5), 0, 0, 0);
+        controlsRow.addView(delayField, delayParams);
 
-        LinearLayout orderRow = new LinearLayout(this);
-        orderRow.setOrientation(LinearLayout.HORIZONTAL);
-        orderRow.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        orderRow.setPadding(0, dp(8), 0, 0);
+        Space controlGap = new Space(this);
+        controlsRow.addView(controlGap, new LinearLayout.LayoutParams(0, 1, 1));
 
         Button upButton = smallButton("Up", "#EEF2FF", "#1D4ED8");
         upButton.setEnabled(index > 0 && !running);
         upButton.setOnClickListener(v -> movePayload(index, index - 1));
-        orderRow.addView(upButton, new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT));
+        controlsRow.addView(upButton, new LinearLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button downButton = smallButton("Down", "#EEF2FF", "#1D4ED8");
         downButton.setEnabled(index < payloads.size() - 1 && !running);
         downButton.setOnClickListener(v -> movePayload(index, index + 1));
-        LinearLayout.LayoutParams downParams = new LinearLayout.LayoutParams(dp(68), ViewGroup.LayoutParams.WRAP_CONTENT);
-        downParams.setMargins(dp(6), 0, 0, 0);
-        orderRow.addView(downButton, downParams);
+        LinearLayout.LayoutParams downParams = new LinearLayout.LayoutParams(dp(54), ViewGroup.LayoutParams.WRAP_CONTENT);
+        downParams.setMargins(dp(4), 0, 0, 0);
+        controlsRow.addView(downButton, downParams);
 
-        row.addView(orderRow);
+        row.addView(controlsRow);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.setMargins(0, 0, 0, dp(8));
@@ -851,9 +862,9 @@ public class MainActivity extends Activity {
     private LinearLayout card() {
         LinearLayout view = new LinearLayout(this);
         view.setBackground(rounded("#FFFFFF", "#D9DEE8", 8));
-        view.setPadding(dp(12), dp(12), dp(12), dp(12));
+        view.setPadding(dp(10), dp(10), dp(10), dp(10));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(10));
+        params.setMargins(0, 0, 0, dp(8));
         view.setLayoutParams(params);
         return view;
     }
@@ -874,9 +885,20 @@ public class MainActivity extends Activity {
         EditText view = new EditText(this);
         view.setHint(hint);
         view.setSingleLine(true);
-        view.setTextSize(15);
-        view.setPadding(dp(10), dp(8), dp(10), dp(8));
+        view.setTextSize(14);
+        view.setPadding(dp(9), dp(6), dp(9), dp(6));
+        view.setMinHeight(dp(38));
+        view.setMinimumHeight(dp(38));
         view.setBackground(rounded("#FFFFFF", "#C9D2E3", 7));
+        return view;
+    }
+
+    private EditText compactInput(String hint) {
+        EditText view = input(hint);
+        view.setTextSize(13);
+        view.setPadding(dp(7), 0, dp(7), 0);
+        view.setMinHeight(dp(32));
+        view.setMinimumHeight(dp(32));
         return view;
     }
 
@@ -885,18 +907,23 @@ public class MainActivity extends Activity {
         view.setText(label);
         view.setAllCaps(false);
         view.setTextColor(Color.parseColor(textColor));
-        view.setTextSize(14);
+        view.setTextSize(13);
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         view.setBackground(rounded(fillColor, fillColor, 8));
-        view.setMinHeight(dp(44));
+        view.setMinWidth(0);
+        view.setMinimumWidth(0);
+        view.setMinHeight(dp(40));
+        view.setMinimumHeight(dp(40));
+        view.setPadding(dp(10), 0, dp(10), 0);
         return view;
     }
 
     private Button smallButton(String label, String fillColor, String textColor) {
         Button view = button(label, fillColor, textColor);
-        view.setTextSize(12);
-        view.setMinHeight(dp(34));
-        view.setPadding(dp(6), 0, dp(6), 0);
+        view.setTextSize(11);
+        view.setMinHeight(dp(30));
+        view.setMinimumHeight(dp(30));
+        view.setPadding(dp(4), 0, dp(4), 0);
         return view;
     }
 

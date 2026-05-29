@@ -82,6 +82,7 @@ class BlurferApp(APP_WINDOW_BASE):
         self.selected_port = tk.StringVar(value=self.settings.get("port", str(DEFAULT_PORT)))
         self.selected_delay = tk.StringVar(value="0")
         self.status = tk.StringVar(value="Ready")
+        self.payload_count = tk.StringVar(value="0 payloads")
 
         self.payload_files = []
         self.worker = None
@@ -103,13 +104,15 @@ class BlurferApp(APP_WINDOW_BASE):
             pass
 
         self.colors = {
-            "bg": "#f6f7f9",
+            "bg": "#f5f7fb",
             "panel": "#ffffff",
             "text": "#172033",
             "muted": "#687386",
             "accent": "#2563eb",
             "accent_dark": "#1d4ed8",
+            "accent_soft": "#eef4ff",
             "border": "#d9dee8",
+            "row_alt": "#f8fafc",
             "success": "#15803d",
             "error": "#b42318",
         }
@@ -117,21 +120,34 @@ class BlurferApp(APP_WINDOW_BASE):
         self.configure(bg=self.colors["bg"])
         style.configure(".", font=("Segoe UI", 10))
         style.configure("TFrame", background=self.colors["bg"])
-        style.configure("Panel.TFrame", background=self.colors["panel"])
+        style.configure("Panel.TFrame", background=self.colors["panel"], relief="flat")
+        style.configure("Soft.TFrame", background=self.colors["accent_soft"])
         style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["text"])
         style.configure("Panel.TLabel", background=self.colors["panel"], foreground=self.colors["text"])
         style.configure("Muted.TLabel", background=self.colors["bg"], foreground=self.colors["muted"])
         style.configure("PanelMuted.TLabel", background=self.colors["panel"], foreground=self.colors["muted"])
-        style.configure("Header.TLabel", background=self.colors["bg"], foreground=self.colors["text"], font=("Segoe UI", 18, "bold"))
-        style.configure("TButton", padding=(12, 7))
-        style.configure("Accent.TButton", padding=(14, 8))
+        style.configure("Count.TLabel", background=self.colors["panel"], foreground=self.colors["muted"], font=("Segoe UI", 9))
+        style.configure("Header.TLabel", background=self.colors["bg"], foreground=self.colors["text"], font=("Segoe UI", 20, "bold"))
+        style.configure("Section.TLabel", background=self.colors["panel"], foreground=self.colors["text"], font=("Segoe UI", 12, "bold"))
+        style.configure("TButton", padding=(10, 6))
+        style.configure("Small.TButton", padding=(8, 5))
+        style.configure("Accent.TButton", padding=(12, 7))
         style.map(
             "Accent.TButton",
             foreground=[("disabled", "#a9b2c2"), ("!disabled", "#ffffff")],
             background=[("active", self.colors["accent_dark"]), ("!disabled", self.colors["accent"])],
         )
-        style.configure("Treeview", rowheight=30, fieldbackground=self.colors["panel"], background=self.colors["panel"])
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+        style.configure("TEntry", padding=(6, 4))
+        style.configure("TSpinbox", padding=(6, 4))
+        style.configure(
+            "Treeview",
+            rowheight=28,
+            fieldbackground=self.colors["panel"],
+            background=self.colors["panel"],
+            borderwidth=0,
+            relief="flat",
+        )
+        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=(6, 6))
 
     def _set_window_icon(self):
         ico_path = resource_path("assets", "blurfer.ico")
@@ -204,7 +220,7 @@ class BlurferApp(APP_WINDOW_BASE):
         self.destroy()
 
     def _build_ui(self):
-        root = ttk.Frame(self, padding=18)
+        root = ttk.Frame(self, padding=(18, 16, 18, 16))
         root.pack(fill="both", expand=True)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(2, weight=1)
@@ -218,15 +234,18 @@ class BlurferApp(APP_WINDOW_BASE):
             title_row,
             text="Send one payload, selected payloads, or a full folder queue.",
             style="Muted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        settings = ttk.Frame(root, style="Panel.TFrame", padding=14)
-        settings.grid(row=1, column=0, sticky="ew", pady=(18, 14))
-        settings.columnconfigure(1, weight=1)
-        settings.columnconfigure(3, weight=1)
+        settings = ttk.Frame(root, style="Panel.TFrame", padding=(16, 14))
+        settings.grid(row=1, column=0, sticky="ew", pady=(14, 12))
+        settings.columnconfigure(0, weight=0)
+        settings.columnconfigure(1, weight=0)
+        settings.columnconfigure(2, weight=1)
+        settings.columnconfigure(3, weight=0)
+        settings.columnconfigure(4, weight=0)
 
         ttk.Label(settings, text="Host", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Entry(settings, textvariable=self.host, width=22).grid(row=1, column=0, sticky="ew", padx=(0, 12), pady=(6, 0))
+        ttk.Entry(settings, textvariable=self.host, width=24).grid(row=1, column=0, sticky="ew", padx=(0, 12), pady=(6, 0))
 
         ttk.Label(settings, text="Default port", style="Panel.TLabel").grid(row=0, column=1, sticky="w")
         ttk.Spinbox(settings, from_=1, to=65535, textvariable=self.port, width=8).grid(
@@ -241,12 +260,13 @@ class BlurferApp(APP_WINDOW_BASE):
         ttk.Entry(settings, textvariable=self.payload_dir).grid(
             row=1,
             column=2,
-            columnspan=2,
+            columnspan=1,
             sticky="ew",
             padx=(0, 8),
             pady=(6, 0),
         )
-        ttk.Button(settings, text="Choose Folder", command=self.browse_payload_dir).grid(row=1, column=4, sticky="e", pady=(6, 0))
+        ttk.Button(settings, text="Choose", style="Small.TButton", command=self.browse_payload_dir).grid(row=1, column=3, sticky="e", pady=(6, 0))
+        ttk.Button(settings, text="Refresh", style="Small.TButton", command=self.refresh_payloads).grid(row=1, column=4, sticky="e", padx=(8, 0), pady=(6, 0))
 
         main = ttk.Frame(root)
         main.grid(row=2, column=0, sticky="nsew")
@@ -254,16 +274,16 @@ class BlurferApp(APP_WINDOW_BASE):
         main.columnconfigure(1, weight=3)
         main.rowconfigure(0, weight=1)
 
-        payload_panel = ttk.Frame(main, style="Panel.TFrame", padding=14)
-        payload_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        payload_panel = ttk.Frame(main, style="Panel.TFrame", padding=(16, 14))
+        payload_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         payload_panel.columnconfigure(0, weight=1)
         payload_panel.rowconfigure(1, weight=1)
 
         payload_header = ttk.Frame(payload_panel, style="Panel.TFrame")
-        payload_header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        payload_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         payload_header.columnconfigure(0, weight=1)
-        ttk.Label(payload_header, text="Payloads", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Button(payload_header, text="Refresh", command=self.refresh_payloads).grid(row=0, column=1, sticky="e")
+        ttk.Label(payload_header, text="Payloads", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(payload_header, textvariable=self.payload_count, style="Count.TLabel").grid(row=0, column=1, sticky="e")
 
         table_frame = ttk.Frame(payload_panel, style="Panel.TFrame")
         table_frame.grid(row=1, column=0, sticky="nsew")
@@ -286,59 +306,60 @@ class BlurferApp(APP_WINDOW_BASE):
         self.tree.column("status", minwidth=76, width=84, anchor="center", stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<<TreeviewSelect>>", self._sync_selected_payload_controls)
+        self.tree.tag_configure("evenrow", background=self.colors["panel"])
+        self.tree.tag_configure("oddrow", background=self.colors["row_alt"])
 
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
 
         actions = ttk.Frame(payload_panel, style="Panel.TFrame")
-        actions.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        actions.columnconfigure(0, weight=1)
+        actions.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        actions.columnconfigure(3, weight=1)
 
         order_actions = ttk.Frame(actions, style="Panel.TFrame")
-        order_actions.grid(row=0, column=0, sticky="ew")
-        ttk.Button(order_actions, text="Move Up", command=self.move_selected_up).grid(row=0, column=0, sticky="w")
-        ttk.Button(order_actions, text="Move Down", command=self.move_selected_down).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        order_actions.grid(row=0, column=0, sticky="w")
+        ttk.Button(order_actions, text="Up", style="Small.TButton", command=self.move_selected_up, width=7).grid(row=0, column=0, sticky="w")
+        ttk.Button(order_actions, text="Down", style="Small.TButton", command=self.move_selected_down, width=7).grid(row=0, column=1, sticky="w", padx=(6, 0))
 
         port_actions = ttk.Frame(actions, style="Panel.TFrame")
-        port_actions.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        port_actions.columnconfigure(3, weight=1)
-        ttk.Label(port_actions, text="Selected port", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        port_actions.grid(row=0, column=1, sticky="w", padx=(14, 0))
+        ttk.Label(port_actions, text="Port", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
         ttk.Spinbox(port_actions, from_=1, to=65535, textvariable=self.selected_port, width=8).grid(row=0, column=1, sticky="w")
-        ttk.Button(port_actions, text="Set Port", command=self.apply_selected_port, width=11).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(port_actions, text="Set", style="Small.TButton", command=self.apply_selected_port, width=6).grid(row=0, column=2, sticky="w", padx=(6, 0))
 
         delay_actions = ttk.Frame(actions, style="Panel.TFrame")
-        delay_actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
-        delay_actions.columnconfigure(3, weight=1)
-        ttk.Label(delay_actions, text="Selected delay", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        delay_actions.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        ttk.Label(delay_actions, text="Delay", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
         ttk.Spinbox(delay_actions, from_=0, to=3600, increment=0.5, textvariable=self.selected_delay, width=8).grid(row=0, column=1, sticky="w")
-        ttk.Button(delay_actions, text="Set Delay", command=self.apply_selected_delay, width=11).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(delay_actions, text="Set", style="Small.TButton", command=self.apply_selected_delay, width=6).grid(row=0, column=2, sticky="w", padx=(6, 0))
 
         inject_actions = ttk.Frame(actions, style="Panel.TFrame")
-        inject_actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        inject_actions.columnconfigure(0, weight=1)
+        inject_actions.grid(row=1, column=0, columnspan=4, sticky="e", pady=(9, 0))
         ttk.Button(inject_actions, text="Inject Selected", style="Accent.TButton", command=self.inject_selected).grid(row=0, column=1, sticky="e")
         ttk.Button(inject_actions, text="Inject All", style="Accent.TButton", command=self.inject_all).grid(row=0, column=2, sticky="e", padx=(8, 0))
-        self.stop_button = ttk.Button(inject_actions, text="Stop", command=self.stop_queue, state="disabled")
+        self.stop_button = ttk.Button(inject_actions, text="Stop", style="Small.TButton", command=self.stop_queue, state="disabled")
         self.stop_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
-        log_panel = ttk.Frame(main, style="Panel.TFrame", padding=14)
+        log_panel = ttk.Frame(main, style="Panel.TFrame", padding=(16, 14))
         log_panel.grid(row=0, column=1, sticky="nsew")
         log_panel.columnconfigure(0, weight=1)
         log_panel.rowconfigure(1, weight=1)
 
-        ttk.Label(log_panel, text="Activity", style="Panel.TLabel", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(log_panel, text="Activity", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.log = tk.Text(
             log_panel,
             height=12,
             width=44,
             wrap="word",
-            borderwidth=1,
-            relief="solid",
-            bg="#fbfcfe",
+            borderwidth=0,
+            relief="flat",
+            bg="#f8fafc",
             fg=self.colors["text"],
             insertbackground=self.colors["text"],
             font=("Consolas", 10),
+            padx=10,
+            pady=10,
         )
         self.log.grid(row=1, column=0, sticky="nsew")
         self.log.configure(state="disabled")
@@ -463,6 +484,7 @@ class BlurferApp(APP_WINDOW_BASE):
         if path is None:
             self.payload_files = []
             self.status.set("Choose folder")
+            self.payload_count.set("0 payloads")
             self._log("Choose a payload folder to load payloads.")
             self._save_settings()
             return
@@ -470,6 +492,7 @@ class BlurferApp(APP_WINDOW_BASE):
         if not path.is_dir():
             self.payload_files = []
             self.status.set("Folder missing")
+            self.payload_count.set("0 payloads")
             self._log(f"Payload folder not found: {path}")
             self._save_settings()
             return
@@ -477,7 +500,7 @@ class BlurferApp(APP_WINDOW_BASE):
         discovered = sorted((p for p in path.iterdir() if self._is_payload_file(p)), key=lambda item: item.name.lower())
         self.payload_files = self._apply_saved_payload_order(path, discovered)
 
-        for file_path in self.payload_files:
+        for index, file_path in enumerate(self.payload_files):
             stat = file_path.stat()
             modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
             port = self._payload_port_for_file(path, file_path)
@@ -487,10 +510,12 @@ class BlurferApp(APP_WINDOW_BASE):
                 "end",
                 iid=str(file_path),
                 values=(file_path.name, format_size(stat.st_size), modified, port, delay, "Ready"),
+                tags=("evenrow" if index % 2 == 0 else "oddrow",),
             )
 
         count = len(self.payload_files)
         self.status.set(f"{count} payload{'s' if count != 1 else ''}")
+        self.payload_count.set(f"{count} payload{'s' if count != 1 else ''}")
         if count == 0:
             self._log(f"No payloads found in {path}")
         else:
