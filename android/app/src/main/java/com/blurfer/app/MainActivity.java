@@ -33,6 +33,9 @@ import android.widget.Space;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -58,11 +61,13 @@ public class MainActivity extends Activity {
     private static final String KEY_ORDER_PREFIX = "payload_order_";
     private static final String KEY_DELAY_PREFIX = "payload_delay_";
     private static final String KEY_PAYLOAD_PORT_PREFIX = "payload_port_";
+    private static final String KEY_SAVED_IPS = "saved_ips";  // NEW
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final List<PayloadItem> payloads = new ArrayList<>();
     private final List<String> logEntries = new ArrayList<>();
+    private final List<SavedIP> savedIPs = new ArrayList<>();  // NEW
 
     private SharedPreferences prefs;
     private Uri folderUri;
@@ -73,6 +78,7 @@ public class MainActivity extends Activity {
     private TextView statusText;
     private TextView logText;
     private LinearLayout payloadList;
+    private LinearLayout savedIPList;  // NEW
     private ProgressBar progressBar;
     private Button chooseButton;
     private Button refreshButton;
@@ -87,6 +93,7 @@ public class MainActivity extends Activity {
         configureWindow();
         buildInterface();
         restoreSettings();
+        loadSavedIPs();   // NEW
         refreshPayloads();
     }
 
@@ -140,7 +147,7 @@ public class MainActivity extends Activity {
         subtitle.setPadding(0, dp(3), 0, dp(10));
         root.addView(subtitle);
 
-        root.addView(buildTargetCard());
+        root.addView(buildTargetCard());   // includes saved IP list
         root.addView(buildFolderCard());
 
         LinearLayout listHeader = new LinearLayout(this);
@@ -168,6 +175,10 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
+    // -------------------------------------------------------------------------
+    // TARGET CARD — now includes the saved IP section below host/port fields
+    // -------------------------------------------------------------------------
+
     private View buildTargetCard() {
         LinearLayout card = card();
         card.setOrientation(LinearLayout.VERTICAL);
@@ -193,8 +204,189 @@ public class MainActivity extends Activity {
 
         card.addView(fields);
 
+        // --- Saved IPs section ---
+        LinearLayout ipHeader = new LinearLayout(this);
+        ipHeader.setOrientation(LinearLayout.HORIZONTAL);
+        ipHeader.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams ipHeaderParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ipHeaderParams.setMargins(0, dp(12), 0, dp(6));
+        ipHeader.setLayoutParams(ipHeaderParams);
+
+        TextView savedLabel = text("Saved PS5 IPs", 13, "#687386", true);
+        ipHeader.addView(savedLabel, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        Button addIPButton = smallButton("+ Add", "#EEF2FF", "#1D4ED8");
+        addIPButton.setOnClickListener(v -> showAddIPDialog());
+        ipHeader.addView(addIPButton, new LinearLayout.LayoutParams(dp(60), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        card.addView(ipHeader);
+
+        savedIPList = new LinearLayout(this);
+        savedIPList.setOrientation(LinearLayout.VERTICAL);
+        card.addView(savedIPList);
+
         return card;
     }
+
+    // -------------------------------------------------------------------------
+    // SAVED IP — load / save / render
+    // -------------------------------------------------------------------------
+
+    private void loadSavedIPs() {
+        savedIPs.clear();
+        String json = prefs.getString(KEY_SAVED_IPS, "[]");
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                savedIPs.add(new SavedIP(obj.getString("label"), obj.getString("ip")));
+            }
+        } catch (Exception ignored) {
+        }
+        renderSavedIPs();
+    }
+
+    private void persistSavedIPs() {
+        try {
+            JSONArray arr = new JSONArray();
+            for (SavedIP entry : savedIPs) {
+                JSONObject obj = new JSONObject();
+                obj.put("label", entry.label);
+                obj.put("ip", entry.ip);
+                arr.put(obj);
+            }
+            prefs.edit().putString(KEY_SAVED_IPS, arr.toString()).apply();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void renderSavedIPs() {
+        savedIPList.removeAllViews();
+
+        if (savedIPs.isEmpty()) {
+            TextView empty = text("No saved IPs yet. Tap + Add to save one.", 12, "#687386", false);
+            empty.setPadding(0, dp(2), 0, dp(2));
+            savedIPList.addView(empty);
+            return;
+        }
+
+        for (int i = 0; i < savedIPs.size(); i++) {
+            savedIPList.addView(buildIPRow(savedIPs.get(i), i));
+        }
+    }
+
+    private View buildIPRow(SavedIP entry, int index) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(rounded("#F8F9FB", "#D9DEE8", 7));
+        row.setPadding(dp(9), dp(7), dp(7), dp(7));
+        LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowParams.setMargins(0, 0, 0, dp(5));
+        row.setLayoutParams(rowParams);
+
+        // Label + IP stacked
+        LinearLayout textCol = new LinearLayout(this);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+
+        TextView labelView = text(entry.label, 13, "#172033", true);
+        labelView.setSingleLine(true);
+        labelView.setEllipsize(TextUtils.TruncateAt.END);
+
+        TextView ipView = text(entry.ip, 12, "#687386", false);
+        ipView.setSingleLine(true);
+        ipView.setEllipsize(TextUtils.TruncateAt.END);
+        ipView.setPadding(0, dp(1), 0, 0);
+
+        textCol.addView(labelView);
+        textCol.addView(ipView);
+        row.addView(textCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        // Select button
+        Button selectBtn = smallButton("Select", "#EEF2FF", "#1D4ED8");
+        selectBtn.setOnClickListener(v -> {
+            hostInput.setText(entry.ip);
+            saveSettings();
+            Toast.makeText(this, "Host set to " + entry.ip, Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams selParams = new LinearLayout.LayoutParams(dp(60), ViewGroup.LayoutParams.WRAP_CONTENT);
+        selParams.setMargins(dp(6), 0, 0, 0);
+        row.addView(selectBtn, selParams);
+
+        // Delete button
+        Button deleteBtn = smallButton("✕", "#FFE4E1", "#B42318");
+        deleteBtn.setOnClickListener(v -> showDeleteIPConfirm(index));
+        LinearLayout.LayoutParams delParams = new LinearLayout.LayoutParams(dp(36), ViewGroup.LayoutParams.WRAP_CONTENT);
+        delParams.setMargins(dp(4), 0, 0, 0);
+        row.addView(deleteBtn, delParams);
+
+        return row;
+    }
+
+    private void showAddIPDialog() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(20), dp(10), dp(20), dp(4));
+
+        TextView labelHint = text("Label (e.g. Living Room PS5)", 12, "#687386", false);
+        labelHint.setPadding(0, 0, 0, dp(4));
+        layout.addView(labelHint);
+
+        EditText labelField = input("Label");
+        layout.addView(labelField);
+
+        Space gap = new Space(this);
+        layout.addView(gap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)));
+
+        TextView ipHint = text("IP Address", 12, "#687386", false);
+        ipHint.setPadding(0, 0, 0, dp(4));
+        layout.addView(ipHint);
+
+        EditText ipField = input("e.g. 192.168.1.50");
+        ipField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        layout.addView(ipField);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Add Saved IP")
+                .setView(layout)
+                .setPositiveButton("Save", (dialog, which) -> {
+                    String label = labelField.getText().toString().trim();
+                    String ip = ipField.getText().toString().trim();
+                    if (ip.isEmpty()) {
+                        Toast.makeText(this, "IP address cannot be empty.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (label.isEmpty()) {
+                        label = ip;
+                    }
+                    savedIPs.add(new SavedIP(label, ip));
+                    persistSavedIPs();
+                    renderSavedIPs();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showDeleteIPConfirm(int index) {
+        if (index < 0 || index >= savedIPs.size()) return;
+        SavedIP entry = savedIPs.get(index);
+        new AlertDialog.Builder(this)
+                .setTitle("Remove IP")
+                .setMessage("Remove \"" + entry.label + "\" (" + entry.ip + ")?")
+                .setPositiveButton("Remove", (dialog, which) -> {
+                    savedIPs.remove(index);
+                    persistSavedIPs();
+                    renderSavedIPs();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    // -------------------------------------------------------------------------
+    // Everything below is unchanged from original
+    // -------------------------------------------------------------------------
 
     private View buildFolderCard() {
         LinearLayout card = card();
@@ -983,6 +1175,20 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    // -------------------------------------------------------------------------
+    // Data classes
+    // -------------------------------------------------------------------------
+
+    private static class SavedIP {
+        String label;
+        String ip;
+
+        SavedIP(String label, String ip) {
+            this.label = label;
+            this.ip = ip;
+        }
     }
 
     private static class PayloadItem {
