@@ -38,7 +38,7 @@ if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
     exit 1
 fi
 
-"$GRADLE_CMD" :app:assembleDebug
+"$GRADLE_CMD" :app:lintDebug :app:assembleDebug
 
 mkdir -p "$DIST_DIR"
 cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" "$DIST_DIR/Blurfer.apk"

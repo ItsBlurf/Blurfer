@@ -54,7 +54,7 @@ jobs:
       - name: Build APK
         run: |
           cd android
-          gradle :app:assembleDebug
+          gradle :app:lintDebug :app:assembleDebug
           cd ..
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/Blurfer.apk
@@ -90,7 +90,6 @@ jobs:
         run: |
           chmod +x ./build_linux.sh
           ./build_linux.sh
-          cp dist/Blurfer dist/Blurfer-linux-x86_64.bin
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -120,23 +119,11 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          name: Blurfer ${{ github.ref_name }}
+          body_path: .github/release-notes/${{ github.ref_name }}.md
+          fail_on_unmatched_files: true
           files: |
             release-assets/windows-exe/Blurfer.exe
             release-assets/android-apk/Blurfer.apk
             release-assets/linux-builds/Blurfer-linux-x86_64.bin
             release-assets/linux-builds/Blurfer-x86_64.AppImage
-
-      - name: Update release notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for notes in .github/release-notes/v*.md; do
-            tag="$(basename "$notes" .md)"
-            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
-            else
-              echo "Skipping $tag because that release does not exist yet."
-            fi
-          done

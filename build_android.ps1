@@ -27,8 +27,6 @@ if ($env:ANDROID_HOME) {
     $env:Path = "$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
 }
 
-Set-Location $AndroidDir
-
 $GradleCommand = $null
 $GradleWrapper = Join-Path $AndroidDir "gradlew.bat"
 if (Test-Path $GradleWrapper) {
@@ -43,7 +41,15 @@ if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
     Write-Error "Android SDK was not found. Set ANDROID_HOME or ANDROID_SDK_ROOT, or open the android folder in Android Studio."
 }
 
-& $GradleCommand :app:assembleDebug
+Push-Location $AndroidDir
+try {
+    & $GradleCommand :app:lintDebug :app:assembleDebug
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+} finally {
+    Pop-Location
+}
 
 $ApkPath = Join-Path $AndroidDir "app\build\outputs\apk\debug\app-debug.apk"
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null

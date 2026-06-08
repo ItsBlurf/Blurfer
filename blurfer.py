@@ -306,6 +306,7 @@ class BlurferApp(APP_WINDOW_BASE):
         self.tree.column("status", minwidth=76, width=84, anchor="center", stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<<TreeviewSelect>>", self._sync_selected_payload_controls)
+        self.tree.bind("<Delete>", self.delete_selected_payloads)
         self.tree.tag_configure("evenrow", background=self.colors["panel"])
         self.tree.tag_configure("oddrow", background=self.colors["row_alt"])
 
@@ -321,6 +322,12 @@ class BlurferApp(APP_WINDOW_BASE):
         order_actions.grid(row=0, column=0, sticky="w")
         ttk.Button(order_actions, text="Up", style="Small.TButton", command=self.move_selected_up, width=7).grid(row=0, column=0, sticky="w")
         ttk.Button(order_actions, text="Down", style="Small.TButton", command=self.move_selected_down, width=7).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Button(order_actions, text="Delete", style="Small.TButton", command=self.delete_selected_payloads, width=7).grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=(6, 0),
+        )
 
         port_actions = ttk.Frame(actions, style="Panel.TFrame")
         port_actions.grid(row=0, column=1, sticky="w", padx=(14, 0))
@@ -471,10 +478,180 @@ class BlurferApp(APP_WINDOW_BASE):
         if not initial_dir or not Path(initial_dir).expanduser().is_dir():
             initial_dir = str(Path.home())
 
-        selected = filedialog.askdirectory(initialdir=initial_dir)
+        selected = self._show_payload_folder_browser(Path(initial_dir).expanduser())
         if selected:
-            self.payload_dir.set(selected)
+            self.payload_dir.set(str(selected))
             self.refresh_payloads()
+
+    def _show_payload_folder_browser(self, initial_dir):
+        dialog = tk.Toplevel(self)
+        dialog.title("Choose Payload Folder")
+        dialog.transient(self)
+        dialog.geometry("860x540")
+        dialog.minsize(700, 440)
+        dialog.configure(bg=self.colors["bg"])
+
+        result = {"path": None}
+        state = {"preview": initial_dir}
+        path_value = tk.StringVar(value=str(initial_dir))
+        preview_count = tk.StringVar(value="0 payloads")
+
+        root = ttk.Frame(dialog, padding=(16, 14))
+        root.pack(fill="both", expand=True)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
+
+        path_bar = ttk.Frame(root)
+        path_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        path_bar.columnconfigure(1, weight=1)
+        ttk.Button(path_bar, text="Up", style="Small.TButton", command=lambda: show_directory(state["preview"].parent)).grid(
+            row=0,
+            column=0,
+            padx=(0, 8),
+        )
+        path_entry = ttk.Entry(path_bar, textvariable=path_value)
+        path_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Button(path_bar, text="Go", style="Small.TButton", command=lambda: show_directory(Path(path_value.get()).expanduser())).grid(
+            row=0,
+            column=2,
+            padx=(8, 0),
+        )
+        ttk.Button(path_bar, text="System Browse", style="Small.TButton", command=lambda: system_browse()).grid(
+            row=0,
+            column=3,
+            padx=(8, 0),
+        )
+
+        browser = ttk.Frame(root)
+        browser.grid(row=1, column=0, sticky="nsew")
+        browser.columnconfigure(0, weight=2)
+        browser.columnconfigure(1, weight=3)
+        browser.rowconfigure(1, weight=1)
+
+        ttk.Label(browser, text="Folders", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 7))
+        preview_header = ttk.Frame(browser)
+        preview_header.grid(row=0, column=1, sticky="ew", padx=(12, 0), pady=(0, 7))
+        preview_header.columnconfigure(0, weight=1)
+        ttk.Label(preview_header, text="Payloads in previewed folder", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(preview_header, textvariable=preview_count, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
+
+        folder_frame = ttk.Frame(browser)
+        folder_frame.grid(row=1, column=0, sticky="nsew")
+        folder_frame.columnconfigure(0, weight=1)
+        folder_frame.rowconfigure(0, weight=1)
+        folder_list = ttk.Treeview(folder_frame, columns=("folder",), show="headings", selectmode="browse")
+        folder_list.heading("folder", text="Subfolder")
+        folder_list.column("folder", minwidth=180, width=250, anchor="w", stretch=True)
+        folder_list.grid(row=0, column=0, sticky="nsew")
+        folder_scroll = ttk.Scrollbar(folder_frame, orient="vertical", command=folder_list.yview)
+        folder_scroll.grid(row=0, column=1, sticky="ns")
+        folder_list.configure(yscrollcommand=folder_scroll.set)
+
+        preview_frame = ttk.Frame(browser)
+        preview_frame.grid(row=1, column=1, sticky="nsew", padx=(12, 0))
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+        preview_list = ttk.Treeview(preview_frame, columns=("name", "size", "modified"), show="headings")
+        preview_list.heading("name", text="Name")
+        preview_list.heading("size", text="Size")
+        preview_list.heading("modified", text="Modified")
+        preview_list.column("name", minwidth=180, width=260, anchor="w", stretch=True)
+        preview_list.column("size", minwidth=70, width=82, anchor="e", stretch=False)
+        preview_list.column("modified", minwidth=120, width=132, anchor="center", stretch=False)
+        preview_list.grid(row=0, column=0, sticky="nsew")
+        preview_scroll = ttk.Scrollbar(preview_frame, orient="vertical", command=preview_list.yview)
+        preview_scroll.grid(row=0, column=1, sticky="ns")
+        preview_list.configure(yscrollcommand=preview_scroll.set)
+
+        footer = ttk.Frame(root)
+        footer.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Button(footer, text="Cancel", style="Small.TButton", command=dialog.destroy).grid(row=0, column=1)
+        ttk.Button(footer, text="Choose Previewed Folder", style="Accent.TButton", command=lambda: choose_folder()).grid(
+            row=0,
+            column=2,
+            padx=(8, 0),
+        )
+
+        def preview_directory(directory):
+            directory = self._normalized_existing_directory(directory)
+            if directory is None:
+                return False
+
+            state["preview"] = directory
+            path_value.set(str(directory))
+            for item in preview_list.get_children():
+                preview_list.delete(item)
+
+            try:
+                payloads = self._discover_payload_files(directory)
+            except OSError:
+                preview_count.set("Folder unavailable")
+                return False
+
+            for file_path in payloads:
+                try:
+                    stat = file_path.stat()
+                except OSError:
+                    continue
+                modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
+                preview_list.insert("", "end", values=(file_path.name, format_size(stat.st_size), modified))
+
+            count = len(preview_list.get_children())
+            preview_count.set(f"{count} payload{'s' if count != 1 else ''}")
+            return True
+
+        def show_directory(directory):
+            directory = self._normalized_existing_directory(directory)
+            if directory is None:
+                messagebox.showerror("Folder unavailable", "That folder could not be opened.", parent=dialog)
+                return
+
+            for item in folder_list.get_children():
+                folder_list.delete(item)
+
+            try:
+                folders = sorted(
+                    (path for path in directory.iterdir() if path.is_dir() and not path.name.startswith(".")),
+                    key=lambda path: path.name.lower(),
+                )
+            except OSError as exc:
+                messagebox.showerror("Folder unavailable", f"Could not read this folder:\n{exc}", parent=dialog)
+                return
+
+            for folder in folders:
+                folder_list.insert("", "end", iid=str(folder), values=(folder.name,))
+            preview_directory(directory)
+
+        def preview_selected(_event=None):
+            selected = folder_list.selection()
+            if selected:
+                preview_directory(Path(selected[0]))
+
+        def open_selected(_event=None):
+            selected = folder_list.selection()
+            if selected:
+                show_directory(Path(selected[0]))
+
+        def choose_folder():
+            result["path"] = state["preview"]
+            dialog.destroy()
+
+        def system_browse():
+            selected = filedialog.askdirectory(parent=dialog, initialdir=str(state["preview"]))
+            if selected:
+                show_directory(Path(selected))
+
+        folder_list.bind("<<TreeviewSelect>>", preview_selected)
+        folder_list.bind("<Double-1>", open_selected)
+        path_entry.bind("<Return>", lambda _event: show_directory(Path(path_value.get()).expanduser()))
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
+        show_directory(initial_dir)
+        dialog.grab_set()
+        path_entry.focus_set()
+        self.wait_window(dialog)
+        return result["path"]
 
     def refresh_payloads(self):
         path = self._payload_dir_path()
@@ -497,11 +674,26 @@ class BlurferApp(APP_WINDOW_BASE):
             self._save_settings()
             return
 
-        discovered = sorted((p for p in path.iterdir() if self._is_payload_file(p)), key=lambda item: item.name.lower())
+        try:
+            discovered = self._discover_payload_files(path)
+        except OSError as exc:
+            self.payload_files = []
+            self.status.set("Folder unavailable")
+            self.payload_count.set("0 payloads")
+            self._log(f"Could not read payload folder: {exc}")
+            self._save_settings()
+            return
+
         self.payload_files = self._apply_saved_payload_order(path, discovered)
 
-        for index, file_path in enumerate(self.payload_files):
-            stat = file_path.stat()
+        visible_payloads = []
+        for file_path in self.payload_files:
+            try:
+                stat = file_path.stat()
+            except OSError:
+                continue
+            index = len(visible_payloads)
+            visible_payloads.append(file_path)
             modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
             port = self._payload_port_for_file(path, file_path)
             delay = self._payload_delay_for_file(path, file_path)
@@ -513,6 +705,7 @@ class BlurferApp(APP_WINDOW_BASE):
                 tags=("evenrow" if index % 2 == 0 else "oddrow",),
             )
 
+        self.payload_files = visible_payloads
         count = len(self.payload_files)
         self.status.set(f"{count} payload{'s' if count != 1 else ''}")
         self.payload_count.set(f"{count} payload{'s' if count != 1 else ''}")
@@ -521,6 +714,49 @@ class BlurferApp(APP_WINDOW_BASE):
         else:
             self._log(f"Loaded {count} payload{'s' if count != 1 else ''} from {path}")
         self._save_settings()
+
+    def delete_selected_payloads(self, _event=None):
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("Injection in progress", "Wait for the current queue to finish before deleting payloads.")
+            return "break"
+
+        selected = [Path(item) for item in self.tree.selection()]
+        if not selected:
+            messagebox.showinfo("No payload selected", "Select one or more payloads first.")
+            return "break"
+
+        if len(selected) == 1:
+            prompt = f"Permanently delete {selected[0].name}?"
+        else:
+            prompt = f"Permanently delete these {len(selected)} selected payloads?"
+
+        if not messagebox.askyesno("Delete payloads", prompt + "\n\nThis cannot be undone.", icon="warning"):
+            return "break"
+
+        deleted = []
+        failed = []
+        payload_dir = self._payload_dir_path()
+        for file_path in selected:
+            try:
+                if payload_dir is None or file_path.parent != payload_dir:
+                    raise OSError("file is outside the selected payload folder")
+                file_path.unlink()
+                deleted.append(file_path.name)
+            except OSError as exc:
+                failed.append((file_path.name, str(exc)))
+
+        if deleted:
+            self._log(f"Deleted {len(deleted)} payload{'s' if len(deleted) != 1 else ''}: {', '.join(deleted)}")
+        for name, error in failed:
+            self._log(f"Could not delete {name}: {error}")
+
+        self.refresh_payloads()
+        if failed:
+            messagebox.showerror(
+                "Some payloads were not deleted",
+                "\n".join(f"{name}: {error}" for name, error in failed),
+            )
+        return "break"
 
     def inject_selected(self):
         selected_ids = set(self.tree.selection())
@@ -693,6 +929,19 @@ class BlurferApp(APP_WINDOW_BASE):
             return None
         return Path(raw_path).expanduser()
 
+    def _normalized_existing_directory(self, path):
+        try:
+            normalized = Path(path).expanduser().resolve()
+            return normalized if normalized.is_dir() else None
+        except (OSError, RuntimeError):
+            return None
+
+    def _discover_payload_files(self, directory):
+        return sorted(
+            (path for path in directory.iterdir() if self._is_payload_file(path)),
+            key=lambda path: path.name.lower(),
+        )
+
     def _apply_saved_payload_order(self, folder_path, files):
         order = self.settings.get("payload_orders", {}).get(str(folder_path), [])
         remaining = {file_path.name: file_path for file_path in files}
@@ -794,7 +1043,7 @@ class BlurferApp(APP_WINDOW_BASE):
         self._save_settings()
 
     def _is_payload_file(self, path):
-        return path.is_file() and path.name != ".gitkeep"
+        return path.is_file() and not path.name.startswith(".")
 
     def _clean_host(self):
         host = self.host.get().strip()

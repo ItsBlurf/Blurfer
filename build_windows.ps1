@@ -5,6 +5,13 @@ Set-Location $RootDir
 
 $VenvDir = Join-Path $RootDir ".build-venv"
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
+$OutputExe = Join-Path $RootDir "dist\Blurfer.exe"
+
+$RunningBuild = Get-Process -Name "Blurfer" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $OutputExe }
+if ($RunningBuild) {
+    throw "Close the Blurfer instance running from $OutputExe before rebuilding."
+}
 
 if (-not (Test-Path $PythonExe)) {
     python -m venv $VenvDir
@@ -32,4 +39,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Built: $RootDir\dist\Blurfer.exe"
+Write-Host "Built: $OutputExe"

@@ -6,6 +6,7 @@ import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -14,6 +15,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.InputType;
@@ -40,8 +42,10 @@ import java.net.Socket;
 import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,6 +54,10 @@ public class MainActivity extends Activity {
     private static final int REQUEST_FOLDER = 1001;
     private static final int DEFAULT_PORT = 9021;
     private static final int SOCKET_TIMEOUT_MS = 15000;
+    private static final int FLAG_VIRTUAL_DOCUMENT_COMPAT = 1 << 9;
+    private static final int FLAG_PARTIAL_COMPAT = 1 << 13;
+    private static final int FLAG_SUPPORTS_RESTORE_COMPAT = 1 << 17;
+    private static final String COLUMN_ORIGINAL_RELATIVE_PATH_COMPAT = "original_relative_path";
 
     private static final String PREFS = "blurfer_settings";
     private static final String KEY_FOLDER_URI = "folder_uri";
@@ -78,7 +86,14 @@ public class MainActivity extends Activity {
     private Button refreshButton;
     private Button injectSelectedButton;
     private Button injectAllButton;
+    private ContentObserver folderObserver;
+    private int ignoredFileCount;
     private boolean running;
+    private final Runnable folderRefreshRunnable = () -> {
+        if (!running && folderUri != null) {
+            refreshPayloads();
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -87,7 +102,14 @@ public class MainActivity extends Activity {
         configureWindow();
         buildInterface();
         restoreSettings();
-        refreshPayloads();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!running) {
+            refreshPayloads();
+        }
     }
 
     @Override
@@ -98,6 +120,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        unregisterFolderObserver();
+        mainHandler.removeCallbacks(folderRefreshRunnable);
         executor.shutdownNow();
         super.onDestroy();
     }
@@ -117,7 +141,7 @@ public class MainActivity extends Activity {
 
         folderUri = selectedUri;
         saveSettings();
-        refreshPayloads();
+        registerFolderObserver();
     }
 
     private void configureWindow() {
@@ -291,6 +315,7 @@ public class MainActivity extends Activity {
         String savedFolder = prefs.getString(KEY_FOLDER_URI, null);
         if (savedFolder != null && !savedFolder.isEmpty()) {
             folderUri = Uri.parse(savedFolder);
+            registerFolderObserver();
         }
 
         TextWatcher watcher = new SimpleTextWatcher() {
@@ -338,6 +363,7 @@ public class MainActivity extends Activity {
 
         try {
             payloads.addAll(applySavedPayloadOrder(loadPayloads(folderUri)));
+            savePayloadOrder();
         } catch (Exception exc) {
             addEmptyState("Could not read this folder. Choose it again.");
             statusText.setText("Folder access failed");
@@ -349,26 +375,28 @@ public class MainActivity extends Activity {
         if (payloads.isEmpty()) {
             addEmptyState("No payload files found in this folder.");
             statusText.setText("No payloads found");
+            if (ignoredFileCount > 0) {
+                appendLog(ignoredSummary());
+            }
         } else {
             renderPayloadList();
             statusText.setText("Ready");
-            appendLog("Loaded " + payloads.size() + " payload" + (payloads.size() == 1 ? "" : "s") + ".");
+            String message = "Loaded " + payloads.size() + " payload" + (payloads.size() == 1 ? "" : "s") + ".";
+            if (ignoredFileCount > 0) {
+                message += " " + ignoredSummary();
+            }
+            appendLog(message);
         }
     }
 
     private List<PayloadItem> loadPayloads(Uri treeUri) {
         List<PayloadItem> items = new ArrayList<>();
+        Set<String> seenDocumentIds = new HashSet<>();
+        ignoredFileCount = 0;
         String parentDocumentId = DocumentsContract.getTreeDocumentId(treeUri);
         Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId);
-        String[] projection = new String[] {
-            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE,
-            DocumentsContract.Document.COLUMN_SIZE,
-            DocumentsContract.Document.COLUMN_LAST_MODIFIED
-        };
 
-        try (Cursor cursor = getContentResolver().query(childrenUri, projection, null, null, DocumentsContract.Document.COLUMN_DISPLAY_NAME + " ASC")) {
+        try (Cursor cursor = queryPayloadDocuments(childrenUri)) {
             if (cursor == null) {
                 return items;
             }
@@ -378,6 +406,8 @@ public class MainActivity extends Activity {
             int mimeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE);
             int sizeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE);
             int modifiedIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED);
+            int flagsIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_FLAGS);
+            int originalPathIndex = cursor.getColumnIndex(COLUMN_ORIGINAL_RELATIVE_PATH_COMPAT);
 
             while (cursor.moveToNext()) {
                 String mimeType = cursor.getString(mimeIndex);
@@ -386,12 +416,26 @@ public class MainActivity extends Activity {
                 }
 
                 String name = cursor.getString(nameIndex);
-                if (name == null || ".gitkeep".equals(name)) {
+                String documentId = cursor.getString(documentIdIndex);
+                int flags = flagsIndex >= 0 && !cursor.isNull(flagsIndex) ? cursor.getInt(flagsIndex) : 0;
+                String originalPath = originalPathIndex >= 0 && !cursor.isNull(originalPathIndex)
+                    ? cursor.getString(originalPathIndex)
+                    : null;
+
+                if (!isPayloadFileName(name)
+                    || documentId == null
+                    || !seenDocumentIds.add(documentId)
+                    || isUnavailableOrTrashed(flags, originalPath)) {
+                    ignoredFileCount++;
                     continue;
                 }
 
-                String documentId = cursor.getString(documentIdIndex);
                 Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId);
+                if (!isReadableDocument(documentUri)) {
+                    ignoredFileCount++;
+                    continue;
+                }
+
                 long size = cursor.isNull(sizeIndex) ? -1 : cursor.getLong(sizeIndex);
                 long modified = cursor.isNull(modifiedIndex) ? 0 : cursor.getLong(modifiedIndex);
                 PayloadItem item = new PayloadItem(name, documentUri, size, modified);
@@ -402,6 +446,138 @@ public class MainActivity extends Activity {
         }
 
         return items;
+    }
+
+    private Cursor queryPayloadDocuments(Uri childrenUri) {
+        String[] baseProjection = new String[] {
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            DocumentsContract.Document.COLUMN_FLAGS
+        };
+        String[] extendedProjection = new String[] {
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            DocumentsContract.Document.COLUMN_FLAGS,
+            COLUMN_ORIGINAL_RELATIVE_PATH_COMPAT
+        };
+
+        try {
+            return getContentResolver().query(
+                childrenUri,
+                extendedProjection,
+                null,
+                null,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME + " ASC"
+            );
+        } catch (RuntimeException extendedQueryFailure) {
+            try {
+                return getContentResolver().query(
+                    childrenUri,
+                    baseProjection,
+                    null,
+                    null,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME + " ASC"
+                );
+            } catch (RuntimeException baseQueryFailure) {
+                baseQueryFailure.addSuppressed(extendedQueryFailure);
+                throw baseQueryFailure;
+            }
+        }
+    }
+
+    private boolean isPayloadFileName(String name) {
+        if (name == null || name.isEmpty() || name.startsWith(".")) {
+            return false;
+        }
+
+        String lowerName = name.toLowerCase(Locale.ROOT);
+        return !lowerName.startsWith("trashed-")
+            && !lowerName.startsWith("deleted-")
+            && !lowerName.startsWith("recycled-");
+    }
+
+    private boolean isUnavailableOrTrashed(int flags, String originalPath) {
+        int unavailableFlags = FLAG_PARTIAL_COMPAT
+            | FLAG_VIRTUAL_DOCUMENT_COMPAT
+            | FLAG_SUPPORTS_RESTORE_COMPAT;
+        return (flags & unavailableFlags) != 0 || (originalPath != null && !originalPath.isEmpty());
+    }
+
+    private boolean isReadableDocument(Uri documentUri) {
+        try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(documentUri, "r")) {
+            return descriptor != null;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String ignoredSummary() {
+        return "Ignored " + ignoredFileCount
+            + " hidden, trashed, duplicate, incomplete, or unreadable file"
+            + (ignoredFileCount == 1 ? "." : "s.");
+    }
+
+    private void registerFolderObserver() {
+        unregisterFolderObserver();
+        if (folderUri == null) {
+            return;
+        }
+
+        String documentId;
+        try {
+            documentId = DocumentsContract.getTreeDocumentId(folderUri);
+        } catch (RuntimeException ignored) {
+            folderObserver = null;
+            return;
+        }
+
+        folderObserver = new ContentObserver(mainHandler) {
+            @Override
+            public void onChange(boolean selfChange) {
+                mainHandler.removeCallbacks(folderRefreshRunnable);
+                mainHandler.postDelayed(folderRefreshRunnable, 250);
+            }
+        };
+
+        boolean registered = registerFolderObserverUri(
+            DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, documentId)
+        );
+        String authority = folderUri.getAuthority();
+        if (authority != null) {
+            registered |= registerFolderObserverUri(
+                DocumentsContract.buildChildDocumentsUri(authority, documentId)
+            );
+        }
+
+        if (!registered) {
+            folderObserver = null;
+        }
+    }
+
+    private boolean registerFolderObserverUri(Uri uri) {
+        try {
+            getContentResolver().registerContentObserver(uri, false, folderObserver);
+            return true;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private void unregisterFolderObserver() {
+        mainHandler.removeCallbacks(folderRefreshRunnable);
+        if (folderObserver != null) {
+            try {
+                getContentResolver().unregisterContentObserver(folderObserver);
+            } catch (Exception ignored) {
+            }
+        }
+        folderObserver = null;
     }
 
     private List<PayloadItem> applySavedPayloadOrder(List<PayloadItem> discovered) {

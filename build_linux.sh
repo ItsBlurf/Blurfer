@@ -25,10 +25,14 @@ fi
 chmod +x "$ROOT_DIR/dist/Blurfer"
 echo "Built: $ROOT_DIR/dist/Blurfer"
 
+cp "$ROOT_DIR/dist/Blurfer" "$ROOT_DIR/dist/Blurfer-linux-x86_64.bin"
+chmod +x "$ROOT_DIR/dist/Blurfer-linux-x86_64.bin"
+echo "Built: $ROOT_DIR/dist/Blurfer-linux-x86_64.bin"
+
 if command -v appimagetool >/dev/null 2>&1; then
     APPDIR="$ROOT_DIR/dist/Blurfer.AppDir"
     rm -rf "$APPDIR"
-    mkdir -p "$APPDIR/usr/bin"
+    mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/metainfo"
 
     cp "$ROOT_DIR/dist/Blurfer" "$APPDIR/usr/bin/Blurfer"
     cp "$ROOT_DIR/assets/blurfer_icon_256.png" "$APPDIR/blurfer.png"
@@ -40,15 +44,34 @@ exec "$HERE/usr/bin/Blurfer" "$@"
 APP_RUN
     chmod +x "$APPDIR/AppRun"
 
-    cat > "$APPDIR/blurfer.desktop" <<'DESKTOP'
+    cat > "$APPDIR/com.github.ItsBlurf.Blurfer.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=Blurfer
 Exec=Blurfer
 Icon=blurfer
-Categories=Utility;Network;
+Categories=Network;
 Terminal=false
 DESKTOP
+
+    cp "$APPDIR/com.github.ItsBlurf.Blurfer.desktop" \
+        "$APPDIR/usr/share/applications/com.github.ItsBlurf.Blurfer.desktop"
+
+    cat > "$APPDIR/usr/share/metainfo/com.github.ItsBlurf.Blurfer.appdata.xml" <<'APPDATA'
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.github.ItsBlurf.Blurfer</id>
+  <name>Blurfer</name>
+  <summary>Send payload files over TCP</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <description>
+    <p>Blurfer manages payload queues and sends selected files to a target host over TCP.</p>
+  </description>
+  <launchable type="desktop-id">com.github.ItsBlurf.Blurfer.desktop</launchable>
+  <url type="homepage">https://github.com/ItsBlurf/Blurfer</url>
+  <content_rating type="oars-1.1" />
+</component>
+APPDATA
 
     appimagetool "$APPDIR" "$ROOT_DIR/dist/Blurfer-x86_64.AppImage"
     echo "Built: $ROOT_DIR/dist/Blurfer-x86_64.AppImage"
