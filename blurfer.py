@@ -6,9 +6,13 @@ import socket
 import sys
 import threading
 import time
-import tkinter as tk
+import urllib.request
+import urllib.error
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+import customtkinter as ctk
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -16,6 +20,9 @@ except ImportError:
     DND_FILES = None
     TkinterDnD = None
 
+# Configure CustomTkinter
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
@@ -24,10 +31,16 @@ SOCKET_TIMEOUT_SECONDS = 15
 APP_NAME = "Blurfer"
 SETTINGS_FILE_NAME = "settings.json"
 
+DEFAULT_REPOS = [
+    "ItsBlurf/BFpilot",
+    "drakmor/ShadowMountPlus",
+    "EchoStretch/kstuff-lite",
+    "juma-sayeh/PS5-Game-Compressor",
+    "seregonwar/zftpd"
+]
 
 def resource_path(*parts):
     return RESOURCE_DIR.joinpath(*parts)
-
 
 def get_config_dir():
     if sys.platform.startswith("win"):
@@ -37,11 +50,8 @@ def get_config_dir():
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "blurfer"
 
-
 DEFAULT_PAYLOAD_DIR = ""
 CONFIG_PATH = get_config_dir() / SETTINGS_FILE_NAME
-APP_WINDOW_BASE = TkinterDnD.Tk if TkinterDnD else tk.Tk
-
 
 def send_payload(file_path, host, port=DEFAULT_PORT):
     path = Path(file_path)
@@ -51,7 +61,6 @@ def send_payload(file_path, host, port=DEFAULT_PORT):
         sock.sendall(data)
 
     return len(data)
-
 
 def format_size(num_bytes):
     units = ("B", "KB", "MB", "GB")
@@ -64,15 +73,55 @@ def format_size(num_bytes):
         size /= 1024
     return f"{num_bytes} B"
 
+def fetch_github_releases(repo_slug):
+    url = f"https://api.github.com/repos/{repo_slug}/releases"
+    headers = {
+        "User-Agent": "Blurfer-App"
+    }
+    token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            data = json.loads(response.read().decode())
+            return data, None
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, "Repository not found (404)."
+        elif e.code == 403 and "rate limit" in e.reason.lower():
+            return None, "GitHub API rate limit exceeded. Set GITHUB_PERSONAL_ACCESS_TOKEN."
+        return None, f"GitHub API HTTP Error {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        return None, f"Network connection error: {e.reason}"
+    except Exception as e:
+        return None, f"Unexpected error: {str(e)}"
 
-class BlurferApp(APP_WINDOW_BASE):
+# Choose base class depending on TkinterDnD availability
+APP_BASE_CLASS = ctk.CTk
+if TkinterDnD:
+    class BlurferAppBase(ctk.CTk, TkinterDnD.DnDWrapper):
+        def __init__(self):
+            super().__init__()
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+            except Exception as e:
+                print(f"Failed to initialize TkinterDnD: {e}")
+                self.TkdndVersion = None
+else:
+    class BlurferAppBase(ctk.CTk):
+        def __init__(self):
+            super().__init__()
+
+class BlurferApp(BlurferAppBase):
     def __init__(self):
         super().__init__()
 
         self.title("Blurfer")
         self._set_window_icon()
-        self.minsize(1080, 620)
-        self.geometry("1180x700")
+        self.minsize(1220, 680)
+        self.geometry("1280x760")
 
         self.settings = self._load_settings()
 
@@ -89,65 +138,70 @@ class BlurferApp(APP_WINDOW_BASE):
         self.stop_event = threading.Event()
         self.events = queue.Queue()
 
-        self._configure_style()
+        # Repositories list loading
+        self.repositories = self.settings.get("repositories", DEFAULT_REPOS)
+        if not isinstance(self.repositories, list):
+            self.repositories = DEFAULT_REPOS.copy()
+        else:
+            self.repositories = list(self.repositories)
+        self.selected_repo = self.repositories[0] if self.repositories else ""
+        self.is_downloading = False
+
+        self._configure_treeview_style()
         self._build_ui()
         self._setup_drag_and_drop()
+        
         self.refresh_payloads()
+        
+        # Load the default repository data
+        if self.selected_repo:
+            self._on_repo_clicked(self.selected_repo)
+            
+        self.select_tab("inject")
         self.after(100, self._process_events)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _configure_style(self):
+    def _configure_treeview_style(self):
         style = ttk.Style(self)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
 
-        self.colors = {
-            "bg": "#f5f7fb",
-            "panel": "#ffffff",
-            "text": "#172033",
-            "muted": "#687386",
-            "accent": "#2563eb",
-            "accent_dark": "#1d4ed8",
-            "accent_soft": "#eef4ff",
-            "border": "#d9dee8",
-            "row_alt": "#f8fafc",
-            "success": "#15803d",
-            "error": "#b42318",
-        }
-
-        self.configure(bg=self.colors["bg"])
-        style.configure(".", font=("Segoe UI", 10))
-        style.configure("TFrame", background=self.colors["bg"])
-        style.configure("Panel.TFrame", background=self.colors["panel"], relief="flat")
-        style.configure("Soft.TFrame", background=self.colors["accent_soft"])
-        style.configure("TLabel", background=self.colors["bg"], foreground=self.colors["text"])
-        style.configure("Panel.TLabel", background=self.colors["panel"], foreground=self.colors["text"])
-        style.configure("Muted.TLabel", background=self.colors["bg"], foreground=self.colors["muted"])
-        style.configure("PanelMuted.TLabel", background=self.colors["panel"], foreground=self.colors["muted"])
-        style.configure("Count.TLabel", background=self.colors["panel"], foreground=self.colors["muted"], font=("Segoe UI", 9))
-        style.configure("Header.TLabel", background=self.colors["bg"], foreground=self.colors["text"], font=("Segoe UI", 20, "bold"))
-        style.configure("Section.TLabel", background=self.colors["panel"], foreground=self.colors["text"], font=("Segoe UI", 12, "bold"))
-        style.configure("TButton", padding=(10, 6))
-        style.configure("Small.TButton", padding=(8, 5))
-        style.configure("Accent.TButton", padding=(12, 7))
-        style.map(
-            "Accent.TButton",
-            foreground=[("disabled", "#a9b2c2"), ("!disabled", "#ffffff")],
-            background=[("active", self.colors["accent_dark"]), ("!disabled", self.colors["accent"])],
-        )
-        style.configure("TEntry", padding=(6, 4))
-        style.configure("TSpinbox", padding=(6, 4))
+        # Dark mode-friendly Treeview styling
         style.configure(
             "Treeview",
-            rowheight=28,
-            fieldbackground=self.colors["panel"],
-            background=self.colors["panel"],
+            background="#2d3748",       # Gray 700
+            foreground="#f7fafc",       # Gray 50
+            fieldbackground="#2d3748",
+            rowheight=30,
             borderwidth=0,
             relief="flat",
+            font=("Segoe UI", 10)
         )
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=(6, 6))
+        style.map(
+            "Treeview",
+            background=[("selected", "#1f538d")], # CustomTkinter Blue Accent
+            foreground=[("selected", "#ffffff")]
+        )
+        style.configure(
+            "Treeview.Heading",
+            background="#1a202c",       # Gray 800
+            foreground="#a0aec0",       # Gray 400
+            font=("Segoe UI", 9, "bold"),
+            relief="flat"
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", "#2d3748")]
+        )
+
+        self.colors = {
+            "success": "#22c55e",
+            "error": "#ef4444",
+            "accent": "#1f538d",
+            "text_muted": "#a0aec0"
+        }
 
     def _set_window_icon(self):
         ico_path = resource_path("assets", "blurfer.ico")
@@ -206,6 +260,7 @@ class BlurferApp(APP_WINDOW_BASE):
             "payload_orders": payload_orders,
             "payload_delays": payload_delays,
             "payload_ports": payload_ports,
+            "repositories": self.repositories,
         }
 
         try:
@@ -220,165 +275,318 @@ class BlurferApp(APP_WINDOW_BASE):
         self.destroy()
 
     def _build_ui(self):
-        root = ttk.Frame(self, padding=(18, 16, 18, 16))
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(2, weight=1)
+        # Configure layout grids
+        self.grid_columnconfigure(0, weight=0) # Sidebar
+        self.grid_columnconfigure(1, weight=1) # Main View
+        self.grid_rowconfigure(0, weight=1)
 
-        title_row = ttk.Frame(root)
-        title_row.grid(row=0, column=0, sticky="ew")
-        title_row.columnconfigure(0, weight=1)
+        # ----------------- SIDEBAR -----------------
+        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
+        self.sidebar_frame.grid_rowconfigure(5, weight=1) # spacer
 
-        ttk.Label(title_row, text="Blurfer", style="Header.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(
-            title_row,
-            text="Send one payload, selected payloads, or a full folder queue.",
-            style="Muted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.title_label = ctk.CTkLabel(self.sidebar_frame, text="Blurfer", font=ctk.CTkFont(size=26, weight="bold"))
+        self.title_label.grid(row=0, column=0, padx=20, pady=(20, 2))
 
-        settings = ttk.Frame(root, style="Panel.TFrame", padding=(16, 14))
-        settings.grid(row=1, column=0, sticky="ew", pady=(14, 12))
-        settings.columnconfigure(0, weight=0)
-        settings.columnconfigure(1, weight=0)
-        settings.columnconfigure(2, weight=1)
-        settings.columnconfigure(3, weight=0)
-        settings.columnconfigure(4, weight=0)
+        self.subtitle_label = ctk.CTkLabel(self.sidebar_frame, text="PS5 Payload Tool", font=ctk.CTkFont(size=12), text_color="gray")
+        self.subtitle_label.grid(row=1, column=0, padx=20, pady=(0, 20))
 
-        ttk.Label(settings, text="Host", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Entry(settings, textvariable=self.host, width=24).grid(row=1, column=0, sticky="ew", padx=(0, 12), pady=(6, 0))
-
-        ttk.Label(settings, text="Default port", style="Panel.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Spinbox(settings, from_=1, to=65535, textvariable=self.port, width=8).grid(
-            row=1,
-            column=1,
-            sticky="w",
-            padx=(0, 12),
-            pady=(6, 0),
+        # Sidebar navigation buttons
+        self.nav_inject_btn = ctk.CTkButton(
+            self.sidebar_frame, 
+            text="Inject Payloads", 
+            fg_color="transparent", 
+            text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray30"), 
+            anchor="w",
+            command=lambda: self.select_tab("inject")
         )
+        self.nav_inject_btn.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
 
-        ttk.Label(settings, text="Payload folder", style="Panel.TLabel").grid(row=0, column=2, columnspan=3, sticky="w")
-        ttk.Entry(settings, textvariable=self.payload_dir).grid(
-            row=1,
-            column=2,
-            columnspan=1,
-            sticky="ew",
-            padx=(0, 8),
-            pady=(6, 0),
+        self.nav_download_btn = ctk.CTkButton(
+            self.sidebar_frame, 
+            text="Download Hub", 
+            fg_color="transparent", 
+            text_color=("gray10", "gray90"),
+            hover_color=("gray70", "gray30"), 
+            anchor="w",
+            command=lambda: self.select_tab("download")
         )
-        ttk.Button(settings, text="Choose", style="Small.TButton", command=self.browse_payload_dir).grid(row=1, column=3, sticky="e", pady=(6, 0))
-        ttk.Button(settings, text="Refresh", style="Small.TButton", command=self.refresh_payloads).grid(row=1, column=4, sticky="e", padx=(8, 0), pady=(6, 0))
+        self.nav_download_btn.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
 
-        main = ttk.Frame(root)
-        main.grid(row=2, column=0, sticky="nsew")
-        main.columnconfigure(0, weight=5)
-        main.columnconfigure(1, weight=3)
-        main.rowconfigure(0, weight=1)
+        # Global PS5 Target settings at bottom of sidebar
+        self.settings_sep = ctk.CTkLabel(self.sidebar_frame, text="TARGET PS5 SETTINGS", font=ctk.CTkFont(size=11, weight="bold"), text_color="gray")
+        self.settings_sep.grid(row=6, column=0, padx=20, pady=(20, 5), sticky="w")
 
-        payload_panel = ttk.Frame(main, style="Panel.TFrame", padding=(16, 14))
-        payload_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        payload_panel.columnconfigure(0, weight=1)
-        payload_panel.rowconfigure(1, weight=1)
+        self.host_label = ctk.CTkLabel(self.sidebar_frame, text="Host IP", font=ctk.CTkFont(size=11))
+        self.host_label.grid(row=7, column=0, padx=20, pady=(5, 0), sticky="w")
+        self.host_entry = ctk.CTkEntry(self.sidebar_frame, placeholder_text="e.g. 192.168.1.50", textvariable=self.host)
+        self.host_entry.grid(row=8, column=0, padx=20, pady=(2, 10), sticky="ew")
 
-        payload_header = ttk.Frame(payload_panel, style="Panel.TFrame")
-        payload_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        payload_header.columnconfigure(0, weight=1)
-        ttk.Label(payload_header, text="Payloads", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(payload_header, textvariable=self.payload_count, style="Count.TLabel").grid(row=0, column=1, sticky="e")
+        self.port_label = ctk.CTkLabel(self.sidebar_frame, text="Default Port", font=ctk.CTkFont(size=11))
+        self.port_label.grid(row=9, column=0, padx=20, pady=(5, 0), sticky="w")
+        self.port_entry = ctk.CTkEntry(self.sidebar_frame, textvariable=self.port)
+        self.port_entry.grid(row=10, column=0, padx=20, pady=(2, 20), sticky="ew")
 
-        table_frame = ttk.Frame(payload_panel, style="Panel.TFrame")
-        table_frame.grid(row=1, column=0, sticky="nsew")
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
+        self.version_label = ctk.CTkLabel(self.sidebar_frame, text="v1.2.0 (CustomTkinter)", font=ctk.CTkFont(size=10), text_color="gray50")
+        self.version_label.grid(row=11, column=0, padx=20, pady=(0, 10), sticky="s")
+
+        # ----------------- MAIN VIEW -----------------
+        self.main_view_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.main_view_frame.grid(row=0, column=1, sticky="nsew", padx=15, pady=15)
+        self.main_view_frame.grid_columnconfigure(0, weight=1)
+        self.main_view_frame.grid_rowconfigure(0, weight=1)
+
+        # ----------------- INJECT TAB -----------------
+        self.inject_tab = ctk.CTkFrame(self.main_view_frame, fg_color="transparent")
+        self.inject_tab.grid_columnconfigure(0, weight=5)
+        self.inject_tab.grid_columnconfigure(1, weight=3)
+        self.inject_tab.grid_rowconfigure(1, weight=1)
+
+        # Folder Selection bar
+        folder_frame = ctk.CTkFrame(self.inject_tab, fg_color="transparent")
+        folder_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        folder_frame.grid_columnconfigure(1, weight=1)
+
+        folder_label = ctk.CTkLabel(folder_frame, text="Payload Folder:")
+        folder_label.grid(row=0, column=0, padx=(0, 10), sticky="w")
+
+        folder_entry = ctk.CTkEntry(folder_frame, textvariable=self.payload_dir)
+        folder_entry.grid(row=0, column=1, sticky="ew", padx=(0, 10))
+
+        choose_btn = ctk.CTkButton(folder_frame, text="Choose", width=80, command=self.browse_payload_dir)
+        choose_btn.grid(row=0, column=2, padx=(0, 10))
+
+        refresh_btn = ctk.CTkButton(folder_frame, text="Refresh", width=80, command=self.refresh_payloads)
+        refresh_btn.grid(row=0, column=3)
+
+        # Left Panel (Table + Reordering)
+        payloads_panel = ctk.CTkFrame(self.inject_tab)
+        payloads_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        payloads_panel.grid_columnconfigure(0, weight=1)
+        payloads_panel.grid_rowconfigure(1, weight=1)
+
+        payloads_header = ctk.CTkFrame(payloads_panel, fg_color="transparent")
+        payloads_header.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
+        payloads_title = ctk.CTkLabel(payloads_header, text="Payload Queue", font=ctk.CTkFont(size=14, weight="bold"))
+        payloads_title.pack(side="left")
+        payloads_count_lbl = ctk.CTkLabel(payloads_header, textvariable=self.payload_count, text_color="gray")
+        payloads_count_lbl.pack(side="right")
+
+        # Payloads Table (Treeview)
+        tree_frame = ctk.CTkFrame(payloads_panel, fg_color="transparent")
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=2)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree_frame.grid_rowconfigure(0, weight=1)
 
         columns = ("name", "size", "modified", "port", "delay", "status")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="extended")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
         self.tree.heading("name", text="Name")
         self.tree.heading("size", text="Size")
         self.tree.heading("modified", text="Modified")
         self.tree.heading("port", text="Port")
         self.tree.heading("delay", text="Delay")
         self.tree.heading("status", text="Status")
-        self.tree.column("name", minwidth=130, width=190, anchor="w", stretch=True)
-        self.tree.column("size", minwidth=68, width=76, anchor="e", stretch=False)
-        self.tree.column("modified", minwidth=110, width=122, anchor="center", stretch=False)
-        self.tree.column("port", minwidth=68, width=76, anchor="center", stretch=False)
-        self.tree.column("delay", minwidth=62, width=70, anchor="center", stretch=False)
-        self.tree.column("status", minwidth=76, width=84, anchor="center", stretch=False)
+        self.tree.column("name", minwidth=110, width=140, anchor="w", stretch=True)
+        self.tree.column("size", minwidth=55, width=65, anchor="e", stretch=False)
+        self.tree.column("modified", minwidth=95, width=110, anchor="center", stretch=False)
+        self.tree.column("port", minwidth=55, width=65, anchor="center", stretch=False)
+        self.tree.column("delay", minwidth=45, width=55, anchor="center", stretch=False)
+        self.tree.column("status", minwidth=65, width=75, anchor="center", stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<<TreeviewSelect>>", self._sync_selected_payload_controls)
         self.tree.bind("<Delete>", self.delete_selected_payloads)
-        self.tree.tag_configure("evenrow", background=self.colors["panel"])
-        self.tree.tag_configure("oddrow", background=self.colors["row_alt"])
+        self.tree.tag_configure("evenrow", background="#2d3748")
+        self.tree.tag_configure("oddrow", background="#242c3d")
 
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
 
-        actions = ttk.Frame(payload_panel, style="Panel.TFrame")
-        actions.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        actions.columnconfigure(3, weight=1)
+        # Override & Reorder buttons frame
+        controls_frame = ctk.CTkFrame(payloads_panel, fg_color="transparent")
+        controls_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
 
-        order_actions = ttk.Frame(actions, style="Panel.TFrame")
-        order_actions.grid(row=0, column=0, sticky="w")
-        ttk.Button(order_actions, text="Up", style="Small.TButton", command=self.move_selected_up, width=7).grid(row=0, column=0, sticky="w")
-        ttk.Button(order_actions, text="Down", style="Small.TButton", command=self.move_selected_down, width=7).grid(row=0, column=1, sticky="w", padx=(6, 0))
-        ttk.Button(order_actions, text="Delete", style="Small.TButton", command=self.delete_selected_payloads, width=7).grid(
-            row=0,
-            column=2,
-            sticky="w",
-            padx=(6, 0),
-        )
+        up_btn = ctk.CTkButton(controls_frame, text="Up", width=50, command=self.move_selected_up)
+        up_btn.grid(row=0, column=0, padx=2)
+        down_btn = ctk.CTkButton(controls_frame, text="Down", width=50, command=self.move_selected_down)
+        down_btn.grid(row=0, column=1, padx=2)
+        del_btn = ctk.CTkButton(controls_frame, text="Delete", width=60, fg_color="#991b1b", hover_color="#7f1d1d", command=self.delete_selected_payloads)
+        del_btn.grid(row=0, column=2, padx=(2, 20))
 
-        port_actions = ttk.Frame(actions, style="Panel.TFrame")
-        port_actions.grid(row=0, column=1, sticky="w", padx=(14, 0))
-        ttk.Label(port_actions, text="Port", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Spinbox(port_actions, from_=1, to=65535, textvariable=self.selected_port, width=8).grid(row=0, column=1, sticky="w")
-        ttk.Button(port_actions, text="Set", style="Small.TButton", command=self.apply_selected_port, width=6).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        port_lbl = ctk.CTkLabel(controls_frame, text="Port:")
+        port_lbl.grid(row=0, column=3, padx=2)
+        port_val_entry = ctk.CTkEntry(controls_frame, textvariable=self.selected_port, width=60)
+        port_val_entry.grid(row=0, column=4, padx=2)
+        port_set_btn = ctk.CTkButton(controls_frame, text="Set", width=40, command=self.apply_selected_port)
+        port_set_btn.grid(row=0, column=5, padx=(2, 20))
 
-        delay_actions = ttk.Frame(actions, style="Panel.TFrame")
-        delay_actions.grid(row=0, column=2, sticky="w", padx=(12, 0))
-        ttk.Label(delay_actions, text="Delay", style="PanelMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Spinbox(delay_actions, from_=0, to=3600, increment=0.5, textvariable=self.selected_delay, width=8).grid(row=0, column=1, sticky="w")
-        ttk.Button(delay_actions, text="Set", style="Small.TButton", command=self.apply_selected_delay, width=6).grid(row=0, column=2, sticky="w", padx=(6, 0))
+        delay_lbl = ctk.CTkLabel(controls_frame, text="Delay:")
+        delay_lbl.grid(row=0, column=6, padx=2)
+        delay_val_entry = ctk.CTkEntry(controls_frame, textvariable=self.selected_delay, width=50)
+        delay_val_entry.grid(row=0, column=7, padx=2)
+        delay_set_btn = ctk.CTkButton(controls_frame, text="Set", width=40, command=self.apply_selected_delay)
+        delay_set_btn.grid(row=0, column=8, padx=2)
 
-        inject_actions = ttk.Frame(actions, style="Panel.TFrame")
-        inject_actions.grid(row=1, column=0, columnspan=4, sticky="e", pady=(9, 0))
-        ttk.Button(inject_actions, text="Inject Selected", style="Accent.TButton", command=self.inject_selected).grid(row=0, column=1, sticky="e")
-        ttk.Button(inject_actions, text="Inject All", style="Accent.TButton", command=self.inject_all).grid(row=0, column=2, sticky="e", padx=(8, 0))
-        self.stop_button = ttk.Button(inject_actions, text="Stop", style="Small.TButton", command=self.stop_queue, state="disabled")
-        self.stop_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        # Right Panel (Log + Main Actions)
+        right_panel = ctk.CTkFrame(self.inject_tab)
+        right_panel.grid(row=1, column=1, sticky="nsew")
+        right_panel.grid_columnconfigure(0, weight=1)
+        right_panel.grid_rowconfigure(1, weight=1)
 
-        log_panel = ttk.Frame(main, style="Panel.TFrame", padding=(16, 14))
-        log_panel.grid(row=0, column=1, sticky="nsew")
-        log_panel.columnconfigure(0, weight=1)
-        log_panel.rowconfigure(1, weight=1)
+        log_title = ctk.CTkLabel(right_panel, text="Activity Log", font=ctk.CTkFont(size=14, weight="bold"))
+        log_title.grid(row=0, column=0, sticky="w", padx=12, pady=8)
 
-        ttk.Label(log_panel, text="Activity", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
-        self.log = tk.Text(
-            log_panel,
-            height=12,
-            width=44,
-            wrap="word",
-            borderwidth=0,
-            relief="flat",
-            bg="#f8fafc",
-            fg=self.colors["text"],
-            insertbackground=self.colors["text"],
-            font=("Consolas", 10),
-            padx=10,
-            pady=10,
-        )
-        self.log.grid(row=1, column=0, sticky="nsew")
+        self.log = ctk.CTkTextbox(right_panel, font=("Consolas", 12))
+        self.log.grid(row=1, column=0, sticky="nsew", padx=12, pady=8)
         self.log.configure(state="disabled")
 
-        progress_row = ttk.Frame(log_panel, style="Panel.TFrame")
-        progress_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        progress_row.columnconfigure(0, weight=1)
-        self.progress = ttk.Progressbar(progress_row, mode="determinate")
-        self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        ttk.Label(progress_row, textvariable=self.status, style="PanelMuted.TLabel").grid(row=0, column=1, sticky="e")
+        actions_panel = ctk.CTkFrame(right_panel, fg_color="transparent")
+        actions_panel.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
+        actions_panel.grid_columnconfigure(0, weight=1)
+        actions_panel.grid_columnconfigure(1, weight=1)
+        actions_panel.grid_columnconfigure(2, weight=1)
 
-        self._log("Choose a payload folder, enter the target host/IP, then inject.")
+        self.progress = ctk.CTkProgressBar(actions_panel, mode="determinate")
+        self.progress.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+        self.progress.set(0.0)
+
+        status_lbl = ctk.CTkLabel(actions_panel, textvariable=self.status, font=ctk.CTkFont(size=11), anchor="w")
+        status_lbl.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        inject_sel_btn = ctk.CTkButton(actions_panel, text="Inject Selected", command=self.inject_selected)
+        inject_sel_btn.grid(row=2, column=0, padx=2, sticky="ew")
+
+        inject_all_btn = ctk.CTkButton(actions_panel, text="Inject All", command=self.inject_all)
+        inject_all_btn.grid(row=2, column=1, padx=2, sticky="ew")
+
+        self.stop_button = ctk.CTkButton(actions_panel, text="Stop", fg_color="#991b1b", hover_color="#7f1d1d", state="disabled", command=self.stop_queue)
+        self.stop_button.grid(row=2, column=2, padx=2, sticky="ew")
+
+        # ----------------- DOWNLOAD TAB -----------------
+        self.download_tab = ctk.CTkFrame(self.main_view_frame, fg_color="transparent")
+        self.download_tab.grid_columnconfigure(0, weight=2) # Repo list
+        self.download_tab.grid_columnconfigure(1, weight=4) # Details
+        self.download_tab.grid_rowconfigure(0, weight=1)
+
+        # Repositories list panel
+        repos_panel = ctk.CTkFrame(self.download_tab)
+        repos_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        repos_panel.grid_columnconfigure(0, weight=1)
+        repos_panel.grid_rowconfigure(1, weight=1)
+
+        repos_title = ctk.CTkLabel(repos_panel, text="Homebrew Repos", font=ctk.CTkFont(size=14, weight="bold"))
+        repos_title.grid(row=0, column=0, padx=12, pady=8, sticky="w")
+
+        self.repo_list_frame = ctk.CTkScrollableFrame(repos_panel, label_text="Repositories")
+        self.repo_list_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=2)
+
+        repos_btns = ctk.CTkFrame(repos_panel, fg_color="transparent")
+        repos_btns.grid(row=2, column=0, sticky="ew", padx=12, pady=12)
+        repos_btns.grid_columnconfigure(0, weight=1)
+        repos_btns.grid_columnconfigure(1, weight=1)
+
+        add_repo_btn = ctk.CTkButton(repos_btns, text="Add Repo", command=self._add_repo_dialog)
+        add_repo_btn.grid(row=0, column=0, padx=2, sticky="ew")
+
+        remove_repo_btn = ctk.CTkButton(repos_btns, text="Remove Repo", fg_color="#991b1b", hover_color="#7f1d1d", command=self._remove_repo)
+        remove_repo_btn.grid(row=0, column=1, padx=2, sticky="ew")
+
+        # Details Panel
+        details_panel = ctk.CTkFrame(self.download_tab)
+        details_panel.grid(row=0, column=1, sticky="nsew")
+        details_panel.grid_columnconfigure(0, weight=1)
+        details_panel.grid_rowconfigure(1, weight=1) # split frame expands
+
+        repo_header = ctk.CTkFrame(details_panel, fg_color="transparent")
+        repo_header.grid(row=0, column=0, sticky="ew", padx=15, pady=(15, 5))
+
+        self.repo_title_lbl = ctk.CTkLabel(repo_header, text="Select a Repository", font=ctk.CTkFont(size=16, weight="bold"))
+        self.repo_title_lbl.pack(side="left")
+
+        self.release_label = ctk.CTkLabel(repo_header, text="Version:")
+        self.release_label.pack(side="right", padx=(10, 5))
+
+        self.release_combo = ctk.CTkOptionMenu(repo_header, values=[], command=self._on_release_selected_combo, width=130)
+        self.release_combo.pack(side="right")
+
+        # Split frame for Notes & Assets
+        split_frame = ctk.CTkFrame(details_panel, fg_color="transparent")
+        split_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=5)
+        split_frame.grid_columnconfigure(0, weight=1)
+        split_frame.grid_columnconfigure(1, weight=1)
+        split_frame.grid_rowconfigure(0, weight=1)
+
+        # Notes Frame
+        notes_frame = ctk.CTkFrame(split_frame)
+        notes_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        notes_frame.grid_columnconfigure(0, weight=1)
+        notes_frame.grid_rowconfigure(1, weight=1)
+
+        notes_title = ctk.CTkLabel(notes_frame, text="Release Notes", font=ctk.CTkFont(size=12, weight="bold"))
+        notes_title.grid(row=0, column=0, padx=10, pady=6, sticky="w")
+
+        self.release_notes = ctk.CTkTextbox(notes_frame, font=("Segoe UI", 12))
+        self.release_notes.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.release_notes.configure(state="disabled")
+
+        # Assets Frame
+        assets_frame = ctk.CTkFrame(split_frame)
+        assets_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        assets_frame.grid_columnconfigure(0, weight=1)
+        assets_frame.grid_rowconfigure(1, weight=1)
+
+        assets_title = ctk.CTkLabel(assets_frame, text="Release Assets (.elf/.bin/.js)", font=ctk.CTkFont(size=12, weight="bold"))
+        assets_title.grid(row=0, column=0, padx=10, pady=6, sticky="w")
+
+        assets_tree_frame = ctk.CTkFrame(assets_frame, fg_color="transparent")
+        assets_tree_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        assets_tree_frame.grid_columnconfigure(0, weight=1)
+        assets_tree_frame.grid_rowconfigure(0, weight=1)
+
+        self.assets_tree = ttk.Treeview(assets_tree_frame, columns=("name", "size"), show="headings", selectmode="browse")
+        self.assets_tree.heading("name", text="Asset Name")
+        self.assets_tree.heading("size", text="Size")
+        self.assets_tree.column("name", minwidth=130, width=170, anchor="w", stretch=True)
+        self.assets_tree.column("size", minwidth=60, width=80, anchor="e", stretch=False)
+        self.assets_tree.grid(row=0, column=0, sticky="nsew")
+        self.assets_tree.tag_configure("evenrow", background="#2d3748")
+        self.assets_tree.tag_configure("oddrow", background="#242c3d")
+
+        assets_scroll = ttk.Scrollbar(assets_tree_frame, orient="vertical", command=self.assets_tree.yview)
+        assets_scroll.grid(row=0, column=1, sticky="ns")
+        self.assets_tree.configure(yscrollcommand=assets_scroll.set)
+
+        # Download Action panel
+        download_actions = ctk.CTkFrame(details_panel, fg_color="transparent")
+        download_actions.grid(row=2, column=0, sticky="ew", padx=15, pady=15)
+        download_actions.grid_columnconfigure(0, weight=1)
+
+        self.download_progress = ctk.CTkProgressBar(download_actions, mode="determinate")
+        self.download_progress.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.download_progress.set(0.0)
+
+        bottom_row = ctk.CTkFrame(download_actions, fg_color="transparent")
+        bottom_row.grid(row=1, column=0, sticky="ew")
+        bottom_row.grid_columnconfigure(0, weight=1)
+
+        self.download_status_lbl = ctk.CTkLabel(bottom_row, text="Idle", text_color="gray", anchor="w")
+        self.download_status_lbl.grid(row=0, column=0, sticky="w")
+
+        self.download_btn = ctk.CTkButton(bottom_row, text="Download Asset", command=self._download_selected_asset)
+        self.download_btn.grid(row=0, column=1, sticky="e")
+
+    def select_tab(self, name):
+        if name == "inject":
+            self.inject_tab.grid(row=0, column=0, sticky="nsew")
+            self.download_tab.grid_forget()
+            self.nav_inject_btn.configure(fg_color="#1f538d", text_color="#ffffff")
+            self.nav_download_btn.configure(fg_color="transparent", text_color=("gray10", "gray90"))
+        else:
+            self.download_tab.grid(row=0, column=0, sticky="nsew")
+            self.inject_tab.grid_forget()
+            self.nav_download_btn.configure(fg_color="#1f538d", text_color="#ffffff")
+            self.nav_inject_btn.configure(fg_color="transparent", text_color=("gray10", "gray90"))
 
     def _setup_drag_and_drop(self):
         if DND_FILES is None:
@@ -386,8 +594,11 @@ class BlurferApp(APP_WINDOW_BASE):
             return
 
         for widget in (self, self.tree):
-            widget.drop_target_register(DND_FILES)
-            widget.dnd_bind("<<Drop>>", self._handle_payload_drop)
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._handle_payload_drop)
+            except Exception as e:
+                self._log(f"Could not bind drag-and-drop: {e}")
 
     def _handle_payload_drop(self, event):
         dropped_files = self._parse_dropped_files(event.data)
@@ -478,180 +689,10 @@ class BlurferApp(APP_WINDOW_BASE):
         if not initial_dir or not Path(initial_dir).expanduser().is_dir():
             initial_dir = str(Path.home())
 
-        selected = self._show_payload_folder_browser(Path(initial_dir).expanduser())
+        selected = filedialog.askdirectory(parent=self, initialdir=str(Path(initial_dir).expanduser()))
         if selected:
             self.payload_dir.set(str(selected))
             self.refresh_payloads()
-
-    def _show_payload_folder_browser(self, initial_dir):
-        dialog = tk.Toplevel(self)
-        dialog.title("Choose Payload Folder")
-        dialog.transient(self)
-        dialog.geometry("860x540")
-        dialog.minsize(700, 440)
-        dialog.configure(bg=self.colors["bg"])
-
-        result = {"path": None}
-        state = {"preview": initial_dir}
-        path_value = tk.StringVar(value=str(initial_dir))
-        preview_count = tk.StringVar(value="0 payloads")
-
-        root = ttk.Frame(dialog, padding=(16, 14))
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(1, weight=1)
-
-        path_bar = ttk.Frame(root)
-        path_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        path_bar.columnconfigure(1, weight=1)
-        ttk.Button(path_bar, text="Up", style="Small.TButton", command=lambda: show_directory(state["preview"].parent)).grid(
-            row=0,
-            column=0,
-            padx=(0, 8),
-        )
-        path_entry = ttk.Entry(path_bar, textvariable=path_value)
-        path_entry.grid(row=0, column=1, sticky="ew")
-        ttk.Button(path_bar, text="Go", style="Small.TButton", command=lambda: show_directory(Path(path_value.get()).expanduser())).grid(
-            row=0,
-            column=2,
-            padx=(8, 0),
-        )
-        ttk.Button(path_bar, text="System Browse", style="Small.TButton", command=lambda: system_browse()).grid(
-            row=0,
-            column=3,
-            padx=(8, 0),
-        )
-
-        browser = ttk.Frame(root)
-        browser.grid(row=1, column=0, sticky="nsew")
-        browser.columnconfigure(0, weight=2)
-        browser.columnconfigure(1, weight=3)
-        browser.rowconfigure(1, weight=1)
-
-        ttk.Label(browser, text="Folders", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 7))
-        preview_header = ttk.Frame(browser)
-        preview_header.grid(row=0, column=1, sticky="ew", padx=(12, 0), pady=(0, 7))
-        preview_header.columnconfigure(0, weight=1)
-        ttk.Label(preview_header, text="Payloads in previewed folder", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(preview_header, textvariable=preview_count, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
-
-        folder_frame = ttk.Frame(browser)
-        folder_frame.grid(row=1, column=0, sticky="nsew")
-        folder_frame.columnconfigure(0, weight=1)
-        folder_frame.rowconfigure(0, weight=1)
-        folder_list = ttk.Treeview(folder_frame, columns=("folder",), show="headings", selectmode="browse")
-        folder_list.heading("folder", text="Subfolder")
-        folder_list.column("folder", minwidth=180, width=250, anchor="w", stretch=True)
-        folder_list.grid(row=0, column=0, sticky="nsew")
-        folder_scroll = ttk.Scrollbar(folder_frame, orient="vertical", command=folder_list.yview)
-        folder_scroll.grid(row=0, column=1, sticky="ns")
-        folder_list.configure(yscrollcommand=folder_scroll.set)
-
-        preview_frame = ttk.Frame(browser)
-        preview_frame.grid(row=1, column=1, sticky="nsew", padx=(12, 0))
-        preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(0, weight=1)
-        preview_list = ttk.Treeview(preview_frame, columns=("name", "size", "modified"), show="headings")
-        preview_list.heading("name", text="Name")
-        preview_list.heading("size", text="Size")
-        preview_list.heading("modified", text="Modified")
-        preview_list.column("name", minwidth=180, width=260, anchor="w", stretch=True)
-        preview_list.column("size", minwidth=70, width=82, anchor="e", stretch=False)
-        preview_list.column("modified", minwidth=120, width=132, anchor="center", stretch=False)
-        preview_list.grid(row=0, column=0, sticky="nsew")
-        preview_scroll = ttk.Scrollbar(preview_frame, orient="vertical", command=preview_list.yview)
-        preview_scroll.grid(row=0, column=1, sticky="ns")
-        preview_list.configure(yscrollcommand=preview_scroll.set)
-
-        footer = ttk.Frame(root)
-        footer.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        footer.columnconfigure(0, weight=1)
-        ttk.Button(footer, text="Cancel", style="Small.TButton", command=dialog.destroy).grid(row=0, column=1)
-        ttk.Button(footer, text="Choose Previewed Folder", style="Accent.TButton", command=lambda: choose_folder()).grid(
-            row=0,
-            column=2,
-            padx=(8, 0),
-        )
-
-        def preview_directory(directory):
-            directory = self._normalized_existing_directory(directory)
-            if directory is None:
-                return False
-
-            state["preview"] = directory
-            path_value.set(str(directory))
-            for item in preview_list.get_children():
-                preview_list.delete(item)
-
-            try:
-                payloads = self._discover_payload_files(directory)
-            except OSError:
-                preview_count.set("Folder unavailable")
-                return False
-
-            for file_path in payloads:
-                try:
-                    stat = file_path.stat()
-                except OSError:
-                    continue
-                modified = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
-                preview_list.insert("", "end", values=(file_path.name, format_size(stat.st_size), modified))
-
-            count = len(preview_list.get_children())
-            preview_count.set(f"{count} payload{'s' if count != 1 else ''}")
-            return True
-
-        def show_directory(directory):
-            directory = self._normalized_existing_directory(directory)
-            if directory is None:
-                messagebox.showerror("Folder unavailable", "That folder could not be opened.", parent=dialog)
-                return
-
-            for item in folder_list.get_children():
-                folder_list.delete(item)
-
-            try:
-                folders = sorted(
-                    (path for path in directory.iterdir() if path.is_dir() and not path.name.startswith(".")),
-                    key=lambda path: path.name.lower(),
-                )
-            except OSError as exc:
-                messagebox.showerror("Folder unavailable", f"Could not read this folder:\n{exc}", parent=dialog)
-                return
-
-            for folder in folders:
-                folder_list.insert("", "end", iid=str(folder), values=(folder.name,))
-            preview_directory(directory)
-
-        def preview_selected(_event=None):
-            selected = folder_list.selection()
-            if selected:
-                preview_directory(Path(selected[0]))
-
-        def open_selected(_event=None):
-            selected = folder_list.selection()
-            if selected:
-                show_directory(Path(selected[0]))
-
-        def choose_folder():
-            result["path"] = state["preview"]
-            dialog.destroy()
-
-        def system_browse():
-            selected = filedialog.askdirectory(parent=dialog, initialdir=str(state["preview"]))
-            if selected:
-                show_directory(Path(selected))
-
-        folder_list.bind("<<TreeviewSelect>>", preview_selected)
-        folder_list.bind("<Double-1>", open_selected)
-        path_entry.bind("<Return>", lambda _event: show_directory(Path(path_value.get()).expanduser()))
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-
-        show_directory(initial_dir)
-        dialog.grab_set()
-        path_entry.focus_set()
-        self.wait_window(dialog)
-        return result["path"]
 
     def refresh_payloads(self):
         path = self._payload_dir_path()
@@ -847,7 +888,7 @@ class BlurferApp(APP_WINDOW_BASE):
         for file_path in files:
             self._set_tree_status(file_path, "Queued")
 
-        self.progress.configure(maximum=len(files), value=0)
+        self.progress.set(0.0)
         self.status.set("Starting...")
         self.stop_event.clear()
         self.stop_button.configure(state="normal")
@@ -911,13 +952,65 @@ class BlurferApp(APP_WINDOW_BASE):
                     self._log(event[1])
                 elif kind == "progress":
                     _, current, total = event
-                    self.progress.configure(maximum=total, value=current)
+                    self.progress.set(current / total if total > 0 else 0)
                     self.status.set(f"{current}/{total}")
                 elif kind == "done":
                     _, completed, total = event
                     self.stop_button.configure(state="disabled")
                     self.status.set(f"Done: {completed}/{total} sent")
                     self._log(f"Queue finished. {completed}/{total} payloads sent.")
+                elif kind == "gh_releases":
+                    _, repo, releases, err = event
+                    if repo == self.selected_repo:
+                        if err:
+                            self.release_combo.configure(values=[])
+                            self.release_combo.set("Error")
+                            self.release_notes.configure(state="normal")
+                            self.release_notes.delete("1.0", "end")
+                            self.release_notes.insert("end", f"Failed to fetch releases:\n{err}")
+                            self.release_notes.configure(state="disabled")
+                        else:
+                            self.fetched_releases = releases
+                            if not releases:
+                                self.release_combo.configure(values=[])
+                                self.release_combo.set("No Releases")
+                                self.release_notes.configure(state="normal")
+                                self.release_notes.delete("1.0", "end")
+                                self.release_notes.insert("end", "This repository has no releases.")
+                                self.release_notes.configure(state="disabled")
+                            else:
+                                tags = [r.get("tag_name") for r in releases]
+                                self.release_combo.configure(values=tags)
+                                self.release_combo.set(tags[0])
+                                self._on_release_selected(tags[0])
+                elif kind == "gh_download_progress":
+                    _, bytes_read, total_size = event
+                    if total_size > 0:
+                        pct = bytes_read / total_size
+                        self.download_progress.set(pct)
+                        self.download_status_lbl.configure(
+                            text=f"Downloading: {format_size(bytes_read)} / {format_size(total_size)} ({int(pct*100)}%)",
+                            text_color=("gray10", "gray90")
+                        )
+                    else:
+                        self.download_status_lbl.configure(
+                            text=f"Downloading: {format_size(bytes_read)} (unknown total size)",
+                            text_color=("gray10", "gray90")
+                        )
+                elif kind == "gh_download_done":
+                    _, success, detail = event
+                    self.is_downloading = False
+                    self.download_btn.configure(state="normal")
+                    if success:
+                        self.download_progress.set(1.0)
+                        self.download_status_lbl.configure(text=f"Finished! Saved {detail}", text_color="green")
+                        self._log(f"Successfully downloaded {detail} from GitHub to payload folder.")
+                        self.refresh_payloads()
+                    else:
+                        self.download_progress.set(0.0)
+                        self.download_status_lbl.configure(text=f"Failed: {detail}", text_color="red")
+                        self._log(f"Download failed: {detail}")
+                        messagebox.showerror("Download Failed", f"Failed to download asset:\n{detail}")
         except queue.Empty:
             pass
 
@@ -1043,7 +1136,7 @@ class BlurferApp(APP_WINDOW_BASE):
         self._save_settings()
 
     def _is_payload_file(self, path):
-        return path.is_file() and not path.name.startswith(".")
+        return path.is_file() and path.suffix.lower() in (".elf", ".bin", ".js") and not path.name.startswith(".")
 
     def _clean_host(self):
         host = self.host.get().strip()
@@ -1087,6 +1180,240 @@ class BlurferApp(APP_WINDOW_BASE):
         self.log.insert("end", f"[{timestamp}] {message}\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    # ----------------- REPOSITORY ACTION HANDLERS -----------------
+    def _update_repo_list_ui(self):
+        for widget in self.repo_list_frame.winfo_children():
+            widget.destroy()
+
+        for repo in self.repositories:
+            is_selected = (repo == self.selected_repo)
+            btn = ctk.CTkButton(
+                self.repo_list_frame,
+                text=repo,
+                anchor="w",
+                fg_color="#1f538d" if is_selected else "transparent",
+                text_color="#ffffff" if is_selected else ("gray10", "gray90"),
+                hover_color=("#e2e8f0", "#334155") if not is_selected else "#1f538d",
+                command=lambda r=repo: self._on_repo_clicked(r)
+            )
+            btn.pack(fill="x", pady=2, padx=5)
+
+    def _on_repo_clicked(self, repo):
+        if self.is_downloading:
+            messagebox.showinfo("Download in progress", "Please wait for the current download to finish first.")
+            return
+
+        self.selected_repo = repo
+        self._update_repo_list_ui()
+        self.repo_title_lbl.configure(text=repo)
+
+        # Clear combo & details
+        self.release_combo.configure(values=[])
+        self.release_combo.set("Loading...")
+        self.release_notes.configure(state="normal")
+        self.release_notes.delete("1.0", "end")
+        self.release_notes.insert("end", "Loading release details from GitHub...")
+        self.release_notes.configure(state="disabled")
+
+        for item in self.assets_tree.get_children():
+            self.assets_tree.delete(item)
+
+        threading.Thread(target=self._fetch_releases_worker, args=(repo,), daemon=True).start()
+
+    def _fetch_releases_worker(self, repo):
+        releases, err = fetch_github_releases(repo)
+        self.events.put(("gh_releases", repo, releases, err))
+
+    def _on_release_selected_combo(self, val):
+        self._on_release_selected(val)
+
+    def _on_release_selected(self, tag_name):
+        if not hasattr(self, "fetched_releases") or not self.fetched_releases:
+            return
+
+        selected_release = None
+        for r in self.fetched_releases:
+            if r.get("tag_name") == tag_name:
+                selected_release = r
+                break
+
+        if not selected_release:
+            return
+
+        body = selected_release.get("body") or "No description provided."
+        self.release_notes.configure(state="normal")
+        self.release_notes.delete("1.0", "end")
+        self.release_notes.insert("end", body)
+        self.release_notes.configure(state="disabled")
+
+        # Clear & load assets
+        for item in self.assets_tree.get_children():
+            self.assets_tree.delete(item)
+
+        assets = selected_release.get("assets", [])
+        filtered_assets = []
+        for asset in assets:
+            name = asset.get("name") or ""
+            if any(name.lower().endswith(ext) for ext in (".elf", ".bin", ".js")):
+                filtered_assets.append(asset)
+
+        for index, asset in enumerate(filtered_assets):
+            name = asset.get("name")
+            size = format_size(asset.get("size", 0))
+            url = asset.get("browser_download_url")
+            self.assets_tree.insert(
+                "",
+                "end",
+                iid=url,
+                values=(name, size),
+                tags=("evenrow" if index % 2 == 0 else "oddrow",)
+            )
+
+    def _download_selected_asset(self):
+        if self.is_downloading:
+            return
+
+        selected = self.assets_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Asset", "Please select an asset from the table to download.")
+            return
+
+        download_url = selected[0]
+        values = self.assets_tree.item(download_url, "values")
+        asset_name = values[0]
+
+        payload_dir = self._payload_dir_path()
+        if payload_dir is None:
+            messagebox.showerror("Payload Folder Missing", "Please choose a payload folder in the 'Inject Payloads' tab first.")
+            return
+
+        if not payload_dir.is_dir():
+            messagebox.showerror("Payload Folder Missing", f"The configured payload folder does not exist:\n{payload_dir}")
+            return
+
+        dest_path = payload_dir / asset_name
+        if dest_path.exists():
+            if not messagebox.askyesno("Overwrite File", f"The file '{asset_name}' already exists in your payload folder.\nDo you want to overwrite it?"):
+                return
+
+        self.is_downloading = True
+        self.download_btn.configure(state="disabled")
+        self.download_status_lbl.configure(text="Connecting...", text_color="gray")
+        self.download_progress.set(0.0)
+
+        self.download_stop_event = threading.Event()
+        threading.Thread(
+            target=self._download_worker,
+            args=(download_url, dest_path, self.download_stop_event),
+            daemon=True
+        ).start()
+
+    def _download_worker(self, url, dest_path, stop_event):
+        headers = {
+            "User-Agent": "Blurfer-Downloader"
+        }
+        token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                total_size = int(response.info().get('Content-Length', 0))
+                bytes_read = 0
+
+                temp_path = dest_path.with_suffix(dest_path.suffix + ".tmp")
+                last_update_time = 0
+
+                with open(temp_path, "wb") as f:
+                    while True:
+                        if stop_event.is_set():
+                            break
+                        chunk = response.read(16384)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bytes_read += len(chunk)
+
+                        now = time.monotonic()
+                        if now - last_update_time > 0.1:
+                            self.events.put(("gh_download_progress", bytes_read, total_size))
+                            last_update_time = now
+
+                if stop_event.is_set():
+                    if temp_path.exists():
+                        temp_path.unlink()
+                    self.events.put(("gh_download_done", False, "Download cancelled."))
+                    return
+
+                if dest_path.exists():
+                    dest_path.unlink()
+                shutil.move(str(temp_path), str(dest_path))
+                self.events.put(("gh_download_done", True, dest_path.name))
+        except Exception as e:
+            self.events.put(("gh_download_done", False, str(e)))
+
+    def _add_repo_dialog(self):
+        if self.is_downloading:
+            messagebox.showinfo("Download in progress", "Please wait for the current download to finish first.")
+            return
+
+        dialog = ctk.CTkInputDialog(text="Enter repository slug (owner/repo) or URL:", title="Add Repository")
+        input_str = dialog.get_input()
+        if not input_str:
+            return
+
+        input_str = input_str.strip()
+        if not input_str:
+            return
+
+        repo_slug = None
+        if "github.com/" in input_str:
+            parts = input_str.split("github.com/")[1].split("/")
+            if len(parts) >= 2:
+                repo_slug = f"{parts[0]}/{parts[1]}"
+        else:
+            parts = input_str.split("/")
+            if len(parts) == 2 and parts[0] and parts[1]:
+                repo_slug = input_str
+
+        if not repo_slug:
+            messagebox.showerror("Invalid Format", "Please enter a valid slug 'owner/repo' or a GitHub repository link.")
+            return
+
+        exists = any(r.lower() == repo_slug.lower() for r in self.repositories)
+        if exists:
+            messagebox.showinfo("Duplicate", f"Repository '{repo_slug}' is already in your list.")
+            return
+
+        self.repositories.append(repo_slug)
+        self.selected_repo = repo_slug
+        self._update_repo_list_ui()
+        self._save_settings()
+        self._on_repo_clicked(repo_slug)
+
+    def _remove_repo(self):
+        if self.is_downloading:
+            messagebox.showinfo("Download in progress", "Please wait for the current download to finish first.")
+            return
+
+        if not self.selected_repo:
+            return
+
+        if len(self.repositories) <= 1:
+            messagebox.showinfo("Cannot Remove", "You must keep at least one repository in the list.")
+            return
+
+        if not messagebox.askyesno("Remove Repository", f"Are you sure you want to remove '{self.selected_repo}' from your list?"):
+            return
+
+        self.repositories.remove(self.selected_repo)
+        next_repo = self.repositories[0]
+        self.selected_repo = next_repo
+        self._update_repo_list_ui()
+        self._save_settings()
+        self._on_repo_clicked(next_repo)
 
 
 if __name__ == "__main__":

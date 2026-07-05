@@ -33,6 +33,7 @@ if ($LASTEXITCODE -ne 0) {
     --name Blurfer `
     --icon "assets\blurfer.ico" `
     --add-data "assets;assets" `
+    --collect-all customtkinter `
     blurfer.py
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
