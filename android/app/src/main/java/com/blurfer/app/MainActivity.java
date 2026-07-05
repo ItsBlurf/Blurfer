@@ -1408,18 +1408,29 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             try {
                 String token = prefs.getString("github_token", "").trim();
+                boolean useToken = !token.isEmpty();
                 String urlStr = "https://api.github.com/repos/" + repo + "/releases";
                 URL url = new URL(urlStr);
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setRequestProperty("User-Agent", "Blurfer-Android");
-                conn.setConnectTimeout(12000);
-                conn.setReadTimeout(12000);
-                if (!token.isEmpty()) {
-                    conn.setRequestProperty("Authorization", "Bearer " + token);
-                }
+                HttpURLConnection conn = null;
+                int code = -1;
 
-                int code = conn.getResponseCode();
+                while (true) {
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setRequestProperty("User-Agent", "Blurfer-Android");
+                    conn.setConnectTimeout(12000);
+                    conn.setReadTimeout(12000);
+                    if (useToken) {
+                        conn.setRequestProperty("Authorization", "Bearer " + token);
+                    }
+                    code = conn.getResponseCode();
+                    if (code == 401 && useToken) {
+                        useToken = false;
+                        conn.disconnect();
+                        continue;
+                    }
+                    break;
+                }
                 if (code == 200) {
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
                         StringBuilder sb = new StringBuilder();
@@ -1641,31 +1652,44 @@ public class MainActivity extends Activity {
     private void runDownload(String name, String urlStr, long size) {
         HttpURLConnection conn = null;
         try {
+            String token = prefs.getString("github_token", "").trim();
+            boolean useToken = !token.isEmpty();
             String currentUrl = urlStr;
-            int redirectCount = 0;
-            while (redirectCount < 5) {
-                URL url = new URL(currentUrl);
-                conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("GET");
-                conn.setRequestProperty("User-Agent", "Blurfer-Android");
-                String token = prefs.getString("github_token", "").trim();
-                if (!token.isEmpty() && currentUrl.contains("api.github.com")) {
-                    conn.setRequestProperty("Authorization", "Bearer " + token);
+            int code = -1;
+
+            while (true) {
+                int redirectCount = 0;
+                String loopUrl = currentUrl;
+                while (redirectCount < 5) {
+                    URL url = new URL(loopUrl);
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("GET");
+                    conn.setRequestProperty("User-Agent", "Blurfer-Android");
+                    if (useToken && loopUrl.contains("api.github.com")) {
+                        conn.setRequestProperty("Authorization", "Bearer " + token);
+                    }
+                    conn.setInstanceFollowRedirects(true);
+                    int status = conn.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP
+                        || status == HttpURLConnection.HTTP_MOVED_PERM
+                        || status == 307 || status == 308) {
+                        loopUrl = conn.getHeaderField("Location");
+                        conn.disconnect();
+                        redirectCount++;
+                    } else {
+                        break;
+                    }
                 }
-                conn.setInstanceFollowRedirects(true);
-                int status = conn.getResponseCode();
-                if (status == HttpURLConnection.HTTP_MOVED_TEMP
-                    || status == HttpURLConnection.HTTP_MOVED_PERM
-                    || status == 307 || status == 308) {
-                    currentUrl = conn.getHeaderField("Location");
+
+                code = conn.getResponseCode();
+                if (code == 401 && useToken) {
+                    useToken = false;
                     conn.disconnect();
-                    redirectCount++;
-                } else {
-                    break;
+                    continue;
                 }
+                break;
             }
 
-            int code = conn.getResponseCode();
             if (code == 200) {
                 ContentResolver resolver = getContentResolver();
                 deleteDocumentIfExists(folderUri, name);

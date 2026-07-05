@@ -79,19 +79,41 @@ def fetch_github_releases(repo_slug):
         "User-Agent": "Blurfer-App"
     }
     token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    
+    # Try with token first if configured
     if token:
-        headers["Authorization"] = f"Bearer {token}"
-        
-    req = urllib.request.Request(url, headers=headers)
+        headers_with_token = headers.copy()
+        headers_with_token["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers_with_token)
+        try:
+            with urllib.request.urlopen(req, timeout=12) as response:
+                data = json.loads(response.read().decode())
+                return data, None
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                # Token is unauthorized/invalid, fall through to anonymous retry
+                pass
+            else:
+                if e.code == 404:
+                    return None, "Repository not found (404)."
+                elif e.code == 403 and "rate limit" in e.reason.lower():
+                    return None, "GitHub API rate limit exceeded. Clear or set GITHUB_PERSONAL_ACCESS_TOKEN."
+                return None, f"GitHub API HTTP Error {e.code}: {e.reason}"
+        except Exception:
+            # Fall through on connection error with token to try anonymously
+            pass
+
+    # Fallback to anonymous request
+    req_anon = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=12) as response:
+        with urllib.request.urlopen(req_anon, timeout=12) as response:
             data = json.loads(response.read().decode())
             return data, None
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None, "Repository not found (404)."
         elif e.code == 403 and "rate limit" in e.reason.lower():
-            return None, "GitHub API rate limit exceeded. Set GITHUB_PERSONAL_ACCESS_TOKEN."
+            return None, "GitHub API rate limit exceeded. Please configure a GitHub Token."
         return None, f"GitHub API HTTP Error {e.code}: {e.reason}"
     except urllib.error.URLError as e:
         return None, f"Network connection error: {e.reason}"
@@ -1314,12 +1336,35 @@ class BlurferApp(BlurferAppBase):
             "User-Agent": "Blurfer-Downloader"
         }
         token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or os.environ.get("GITHUB_TOKEN")
-        if token:
+        
+        # Only send token if it's pointing to api.github.com
+        if token and "api.github.com" in url:
             headers["Authorization"] = f"Bearer {token}"
 
         req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=15) as response:
+            response = urllib.request.urlopen(req, timeout=15)
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and token:
+                # Token is unauthorized/invalid, fall through to anonymous retry
+                headers_anon = {
+                    "User-Agent": "Blurfer-Downloader"
+                }
+                req_anon = urllib.request.Request(url, headers=headers_anon)
+                try:
+                    response = urllib.request.urlopen(req_anon, timeout=15)
+                except Exception as ex:
+                    self.events.put(("gh_download_done", False, str(ex)))
+                    return
+            else:
+                self.events.put(("gh_download_done", False, f"HTTP Error {e.code}: {e.reason}"))
+                return
+        except Exception as e:
+            self.events.put(("gh_download_done", False, str(e)))
+            return
+
+        try:
+            with response:
                 total_size = int(response.info().get('Content-Length', 0))
                 bytes_read = 0
 
