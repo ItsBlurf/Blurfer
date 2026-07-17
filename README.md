@@ -87,3 +87,10 @@ Build outputs are written to `dist/`.
 ## Responsibility
 
 Blurfer only sends files selected by the user. Use it only with devices and software you own or are authorized to test. Payload behavior is outside the scope of this project.
+
+## License
+
+This project is licensed under the **MIT License**. See [LICENSE](./LICENSE) for the full text.
+
+Copyright (c) ItsBlurf and contributors.  
+**No warranty** — the software is provided "as is", without warranty of any kind; authors are not liable for claims arising from use of the software.
